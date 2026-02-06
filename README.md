@@ -1,33 +1,12 @@
 # ASR-LLM-TTS Pipeline
 
-Real-time voice pipeline for call center automation. Speak into the mic, get a transcription via whisper.cpp, a response from an LLM (Ollama), and hear it spoken back via Piper TTS. All orchestrated in Go, running in Docker Compose.
+Real-time voice pipeline for call center automation. Speak into the mic, get a transcription via whisper.cpp, a response from an LLM (Ollama), and hear it spoken back via Piper TTS.
 
 ![Conversation Demo](spec/screenshots/conversation-demo.png)
 
-## What it does
+Browser captures mic audio over WebSocket. Gateway decodes, re-samples to 16kHz, and runs energy-based voice activity detector. When speech ends, post to whisper.cpp for transcription, stream the transcript to Ollama for a response, and pipe each completed sentence to Piper TTS while the LLM is still generating. Audio is sent via WebSocket. GPU-bound services (whisper.cpp, Ollama) run on the host for direct ROCm access (I am running an AMD GPU).
 
-Browser captures mic audio over WebSocket. The Go gateway decodes, resamples to 16kHz, and runs energy-based VAD. When speech ends, it posts to whisper.cpp for transcription, streams the transcript to Ollama for a response, and pipes each completed sentence to Piper TTS while the LLM is still generating. Audio comes back over the same WebSocket.
-
-## How it's built
-
-GPU-bound services (whisper.cpp, Ollama) run on the host for direct ROCm/CUDA access. Everything else runs in Docker.
-
-```
-Docker Compose:
-  Frontend  (React)    :3001
-  Gateway   (Go)       :8000
-  Piper TTS            :5100
-  Prometheus           :9090
-  Grafana              :3002
-
-Host:
-  whisper.cpp          :8178
-  Ollama               :11434
-```
-
-The gateway uses a pipeline architecture, not REST. Each WebSocket connection gets its own goroutine with context-based cancellation. LLM and TTS stages overlap via channels so you hear the first sentence before the LLM finishes generating. A semaphore caps concurrent calls at a configurable limit (default 100), returning 503 when full.
-
-No Python anywhere. Both backend services are Go.
+The gateway uses pipeline architecture. Each WebSocket connection gets its own goroutine with context-based cancellation. LLM and TTS stages overlap via channels so you hear the first sentence before the LLM finishes generating. A semaphore caps concurrent calls at a configurable limit (default 100), returning 503 when full.
 
 ## Setup
 
@@ -70,14 +49,14 @@ Prints p50/p95/p99 per stage.
 
 Everything is in `.env`. The important ones:
 
-| Variable | Default | What it does |
-|----------|---------|--------------|
-| OLLAMA_MODEL | llama3.2:3b | Which LLM to use |
-| DEFAULT_TTS_ENGINE | fast | fast (low latency) or quality (better voice) |
-| MAX_CONCURRENT_CALLS | 100 | Admission control limit |
-| VAD_SILENCE_TIMEOUT_MS | 1000 | How long to wait after speech stops |
-| VAD_MIN_SPEECH_MS | 500 | Ignore audio shorter than this |
-| ASR/LLM/TTS_POOL_SIZE | 50 | HTTP connection pool per backend |
+| Variable               | Default     | What it does                                 |
+| ---------------------- | ----------- | -------------------------------------------- |
+| OLLAMA_MODEL           | llama3.2:3b | Which LLM to use                             |
+| DEFAULT_TTS_ENGINE     | fast        | fast (low latency) or quality (better voice) |
+| MAX_CONCURRENT_CALLS   | 100         | Admission control limit                      |
+| VAD_SILENCE_TIMEOUT_MS | 1000        | How long to wait after speech stops          |
+| VAD_MIN_SPEECH_MS      | 500         | Ignore audio shorter than this               |
+| ASR/LLM/TTS_POOL_SIZE  | 50          | HTTP connection pool per backend             |
 
 ## Project layout
 
