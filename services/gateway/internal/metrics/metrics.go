@@ -1,0 +1,45 @@
+package metrics
+
+import (
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+)
+
+var (
+	CallsActive = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "pipeline_calls_active",
+		Help: "Currently active call sessions",
+	})
+
+	CallsTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "pipeline_calls_total",
+		Help: "Total calls processed",
+	})
+
+	StageDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "pipeline_stage_duration_seconds",
+		Help:    "Per-stage latency",
+		Buckets: []float64{0.05, 0.1, 0.2, 0.3, 0.5, 0.8, 1.0, 2.0, 5.0},
+	}, []string{"stage"})
+
+	E2EDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "pipeline_e2e_duration_seconds",
+		Help:    "End-to-end latency from speech-end to first TTS audio",
+		Buckets: []float64{0.1, 0.2, 0.5, 0.8, 1.0, 1.5, 2.0, 3.0, 5.0},
+	})
+
+	Errors = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "pipeline_errors_total",
+		Help: "Error counts by stage",
+	}, []string{"stage", "error_type"})
+
+	AudioChunks = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "audio_chunks_processed_total",
+		Help: "Total audio chunks received",
+	})
+
+	SpeechSegments = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "vad_speech_segments_total",
+		Help: "Speech segments detected by VAD",
+	})
+)

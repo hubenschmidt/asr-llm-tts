@@ -1,0 +1,105 @@
+{
+  "dashboard": {
+    "title": "ASR → LLM → TTS Pipeline",
+    "uid": "pipeline-overview",
+    "timezone": "browser",
+    "refresh": "5s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Active Calls",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+        "targets": [
+          { "expr": "pipeline_calls_active", "legendFormat": "active" }
+        ],
+        "fieldConfig": {
+          "defaults": { "thresholds": { "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 50 },
+            { "color": "red", "value": 90 }
+          ]}}
+        }
+      },
+      {
+        "id": 2,
+        "title": "Total Calls",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+        "targets": [
+          { "expr": "pipeline_calls_total", "legendFormat": "total" }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Calls/sec",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+        "targets": [
+          { "expr": "rate(pipeline_calls_total[1m])", "legendFormat": "calls/s" }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Errors",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+        "targets": [
+          { "expr": "sum(rate(pipeline_errors_total[1m]))", "legendFormat": "errors/s" }
+        ],
+        "fieldConfig": {
+          "defaults": { "thresholds": { "steps": [
+            { "color": "green", "value": null },
+            { "color": "red", "value": 1 }
+          ]}}
+        }
+      },
+      {
+        "id": 5,
+        "title": "Stage Latency (p95)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+        "targets": [
+          { "expr": "histogram_quantile(0.95, rate(pipeline_stage_duration_seconds_bucket{stage=\"asr\"}[1m]))", "legendFormat": "ASR p95" },
+          { "expr": "histogram_quantile(0.95, rate(pipeline_stage_duration_seconds_bucket{stage=\"llm\"}[1m]))", "legendFormat": "LLM p95" },
+          { "expr": "histogram_quantile(0.95, rate(pipeline_stage_duration_seconds_bucket{stage=\"tts\"}[1m]))", "legendFormat": "TTS p95" }
+        ],
+        "fieldConfig": {
+          "defaults": { "unit": "s" }
+        }
+      },
+      {
+        "id": 6,
+        "title": "End-to-End Latency",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+        "targets": [
+          { "expr": "histogram_quantile(0.50, rate(pipeline_e2e_duration_seconds_bucket[1m]))", "legendFormat": "p50" },
+          { "expr": "histogram_quantile(0.95, rate(pipeline_e2e_duration_seconds_bucket[1m]))", "legendFormat": "p95" },
+          { "expr": "histogram_quantile(0.99, rate(pipeline_e2e_duration_seconds_bucket[1m]))", "legendFormat": "p99" }
+        ],
+        "fieldConfig": {
+          "defaults": { "unit": "s" }
+        }
+      },
+      {
+        "id": 7,
+        "title": "Audio Chunks Processed",
+        "type": "timeseries",
+        "gridPos": { "h": 6, "w": 12, "x": 0, "y": 12 },
+        "targets": [
+          { "expr": "rate(audio_chunks_processed_total[1m])", "legendFormat": "chunks/s" }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Speech Segments Detected",
+        "type": "timeseries",
+        "gridPos": { "h": 6, "w": 12, "x": 12, "y": 12 },
+        "targets": [
+          { "expr": "rate(vad_speech_segments_total[1m])", "legendFormat": "segments/s" }
+        ]
+      }
+    ]
+  }
+}

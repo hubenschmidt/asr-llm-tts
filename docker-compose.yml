@@ -1,0 +1,86 @@
+services:
+  gateway:
+    build:
+      context: ./services/gateway
+      dockerfile: Dockerfile
+    ports:
+      - "${GATEWAY_PORT:-8000}:8000"
+    env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./services/gateway:/app
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+    depends_on:
+      piper:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./services/frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./services/frontend/src:/app/src
+      - ./services/frontend/index.html:/app/index.html
+      - node-modules:/app/node_modules
+    depends_on:
+      - gateway
+    restart: unless-stopped
+
+  piper:
+    build:
+      context: ./services/piper
+      dockerfile: Dockerfile
+    ports:
+      - "5100:5100"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5100/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./services/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    ports:
+      - "${GRAFANA_PORT:-3002}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    volumes:
+      - ./services/monitoring/grafana:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  loadtest:
+    build:
+      context: ./services/loadtest
+      dockerfile: Dockerfile
+    volumes:
+      - ./samples:/samples:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    profiles:
+      - tools
+
+volumes:
+  go-mod-cache:
+  go-build-cache:
+  node-modules:
