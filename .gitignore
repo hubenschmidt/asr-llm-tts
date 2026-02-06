@@ -14,8 +14,7 @@ node_modules/
 dist/
 
 # Environment
-.env.local
-.env.*.local
+.env
 
 # OS
 .DS_Store
