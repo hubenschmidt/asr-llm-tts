@@ -37,6 +37,13 @@ docker compose up
 
 Open http://localhost:3001, pick a voice (Fast or Quality), click Start Mic.
 
+## Monitoring
+
+Prometheus scrapes the gateway's `/metrics` endpoint. Grafana is pre-provisioned with a dashboard covering active calls, calls/sec, per-stage latency (ASR, LLM, TTS), E2E percentiles, error rates, and audio throughput.
+
+Prometheus: http://localhost:9090
+Grafana: http://localhost:3002 (admin/admin)
+
 ## Load testing
 
 ```bash
