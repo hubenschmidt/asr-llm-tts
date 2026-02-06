@@ -8,6 +8,8 @@ tmp/
 # Go
 services/gateway/tmp/
 services/piper/tmp/
+services/piper/piper
+services/loadtest/loadtest
 
 # Node
 node_modules/
