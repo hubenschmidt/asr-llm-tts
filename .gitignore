@@ -1,0 +1,30 @@
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+tmp/
+
+# Go
+services/gateway/tmp/
+services/piper/tmp/
+
+# Node
+node_modules/
+dist/
+
+# Environment
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Models (large files)
+*.bin
+*.onnx
+
+# IDE
+.vscode/
+.idea/
