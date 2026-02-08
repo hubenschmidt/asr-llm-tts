@@ -128,8 +128,6 @@ services:
       - "8004:5123"
     volumes:
       - chatterbox-cache:/cache
-    profiles:
-      - ml
     restart: unless-stopped
 
   # melotts:
