@@ -20,6 +20,17 @@ import { MetricsPanel } from "./MetricsPanel";
 const DEFAULT_PROMPT =
   "You are a helpful call center agent. Keep responses concise and conversational.";
 
+const stripThinking = (text) => {
+  let result = text.replace(/<think>[\s\S]*?<\/think>/g, "");
+  result = result.replace(/<think>[\s\S]*$/g, "");
+  return result.trim();
+};
+
+const extractThinking = (text) => {
+  const match = text.match(/<think>([\s\S]*?)<\/think>/);
+  return match ? match[1].trim() : "";
+};
+
 // Only host-managed services that need start/stop via whisper-control.
 // Docker services (piper, kokoro, chatterbox, melotts, faster-whisper) are always running.
 const ENGINE_TO_SERVICE = {
@@ -27,10 +38,13 @@ const ENGINE_TO_SERVICE = {
 };
 
 export const CallPanel = () => {
-  const [ttsEngine, setTtsEngine] = createSignal("");
+  const [ttsEngine, _setTtsEngine] = createSignal(localStorage.getItem("ttsEngine") || "");
   const [sttEngine, setSttEngine] = createSignal("");
-  const [systemPrompt, setSystemPrompt] = createSignal(DEFAULT_PROMPT);
-  const [llmModel, setLlmModel] = createSignal("");
+  const [systemPrompt, setSystemPrompt] = createSignal(localStorage.getItem("systemPrompt") || DEFAULT_PROMPT);
+  const [llmModel, _setLlmModel] = createSignal("");
+
+  const setTtsEngine = (v) => { _setTtsEngine(v); localStorage.setItem("ttsEngine", v); };
+  const setLlmModel = (v) => { _setLlmModel(v); localStorage.setItem("llmModel", v); };
   const [llmModels, setLlmModels] = createSignal([]);
   const [loadingSTT, setLoadingSTT] = createSignal(false);
   const [loadingLLM, setLoadingLLM] = createSignal(false);
@@ -94,6 +108,10 @@ export const CallPanel = () => {
       .then((data) => {
         setLlmModels(data.llm.models);
         if (data.tts?.engines) setAvailableTTS(data.tts.engines);
+        if (llmModel()) return;
+        if (data.llm.loaded?.length > 0) { setLlmModel(data.llm.loaded[0]); return; }
+        const saved = localStorage.getItem("llmModel");
+        if (saved && data.llm.models.includes(saved)) setLlmModel(saved);
       })
       .catch(() => {});
   };
@@ -193,7 +211,9 @@ export const CallPanel = () => {
       setTranscripts((prev) => [...prev, { role: "user", text }]),
     onLLMToken: (token) => setLlmResponse((prev) => prev + token),
     onLLMDone: (text) => {
-      setTranscripts((prev) => [...prev, { role: "agent", text }]);
+      const thinking = extractThinking(text);
+      const clean = stripThinking(text);
+      setTranscripts((prev) => [...prev, { role: "agent", text: clean, thinking }]);
       setLlmResponse("");
     },
     onAudio: playAudio,
@@ -259,8 +279,9 @@ export const CallPanel = () => {
 
   return (
     <div class="layout">
-      <div class="main">
-        <h2 class="page-title">ASR → LLM → TTS Pipeline</h2>
+      {/* ── Left Sidebar: Config ── */}
+      <div class="sidebar-left">
+        <h2>Configuration</h2>
 
         <GPUPanel
           onUnloadAll={() => {
@@ -292,21 +313,16 @@ export const CallPanel = () => {
                 value={sttEngine()}
                 onChange={handleSTTChange}
                 class="select"
-                style={{ flex: "1" }}
                 disabled={isStreaming() || loadingSTT()}
               >
                 <Show when={!sttEngine()}>
                   <option value="">Select engine...</option>
                 </Show>
                 <optgroup label="whisper-server (GPU)">
-                  <option value="whisper-server">
-                    whisper-server GPU (medium)
-                  </option>
+                  <option value="whisper-server">whisper-server GPU (medium)</option>
                 </optgroup>
                 <optgroup label="faster-whisper (INT8, CPU)">
-                  <option value="faster-whisper">
-                    faster-whisper tiny-int8
-                  </option>
+                  <option value="faster-whisper">faster-whisper tiny-int8</option>
                 </optgroup>
               </select>
               <Show when={loadingSTT()}>
@@ -325,9 +341,7 @@ export const CallPanel = () => {
                   stopService(svc)
                     .then(() => setSttEngine(""))
                     .catch((err) =>
-                      setError(
-                        `STT stop failed: ${err instanceof Error ? err.message : err}`,
-                      ),
+                      setError(`STT stop failed: ${err instanceof Error ? err.message : err}`),
                     )
                     .finally(() => setLoadingSTT(false));
                 }}
@@ -349,7 +363,6 @@ export const CallPanel = () => {
                 value={llmModel()}
                 onChange={handleLLMChange}
                 class="select"
-                style={{ flex: "1" }}
                 disabled={isStreaming() || loadingLLM()}
               >
                 <Show when={!llmModel()}>
@@ -370,9 +383,7 @@ export const CallPanel = () => {
                   unloadModel("llm", llmModel())
                     .then(() => setLlmModel(""))
                     .catch((err) =>
-                      setError(
-                        `Unload failed: ${err instanceof Error ? err.message : err}`,
-                      ),
+                      setError(`Unload failed: ${err instanceof Error ? err.message : err}`),
                     )
                     .finally(() => setLoadingLLM(false));
                 }}
@@ -394,7 +405,6 @@ export const CallPanel = () => {
                 value={ttsEngine()}
                 onChange={handleTTSChange}
                 class="select"
-                style={{ flex: "1" }}
                 disabled={isStreaming() || loadingTTS()}
               >
                 <Show when={!ttsEngine()}>
@@ -402,29 +412,19 @@ export const CallPanel = () => {
                 </Show>
                 <optgroup label="Piper (CPU)">
                   <option value="fast">Piper Fast, lowest latency (6MB)</option>
-                  <option value="quality">
-                    Piper Quality, balanced (17MB)
-                  </option>
+                  <option value="quality">Piper Quality, balanced (17MB)</option>
                   <option value="high">Piper High, most natural (109MB)</option>
                 </optgroup>
                 <optgroup label="Other Engines">
-                  <option value="kokoro">
-                    Kokoro, professional, CPU (82M)
-                  </option>
-                  <option value="chatterbox">
-                    Chatterbox, near-ElevenLabs quality (350M)
-                  </option>
-                  <option value="melotts">
-                    MeloTTS, CPU real-time, multi-accent (208M)
-                  </option>
+                  <option value="kokoro">Kokoro, professional, CPU (82M)</option>
+                  <option value="chatterbox">Chatterbox, near-ElevenLabs quality (350M)</option>
+                  <option value="melotts">MeloTTS, CPU real-time, multi-accent (208M)</option>
                   <option
                     value="elevenlabs"
                     disabled={!availableTTS().includes("elevenlabs")}
                   >
                     ElevenLabs, cloud API, low latency
-                    {!availableTTS().includes("elevenlabs")
-                      ? " — not configured"
-                      : ""}
+                    {!availableTTS().includes("elevenlabs") ? " — not configured" : ""}
                   </option>
                 </optgroup>
               </select>
@@ -446,6 +446,47 @@ export const CallPanel = () => {
           </div>
         </div>
 
+        <div class="sidebar-section">
+          <div class="sidebar-section-label">System Prompt</div>
+          <textarea
+            value={systemPrompt()}
+            onInput={(e) => { setSystemPrompt(e.currentTarget.value); localStorage.setItem("systemPrompt", e.currentTarget.value); }}
+            class="prompt"
+            disabled={isStreaming()}
+            rows={4}
+            placeholder="System prompt..."
+          />
+        </div>
+      </div>
+
+      {/* ── Center: Transcript + Controls ── */}
+      <div class="center-panel">
+        <div class="transcript-box">
+          <h3 class="transcript-heading">Transcript</h3>
+          <For each={transcripts()}>
+            {(t) => (
+              <TranscriptEntry role={t.role} text={t.text} thinking={t.thinking} />
+            )}
+          </For>
+          <Show when={stripThinking(llmResponse())}>
+            <p class="transcript-streaming">
+              <strong>Agent: </strong>
+              {stripThinking(llmResponse())}
+            </p>
+          </Show>
+          <Show when={transcripts().length === 0 && !llmResponse()}>
+            <p class="transcript-placeholder">Waiting for audio input...</p>
+          </Show>
+        </div>
+
+        <Show when={isStreaming() || soundChecking()}>
+          <VUMeter level={micLevel()} />
+        </Show>
+
+        <Show when={error()}>
+          <div class="error-box">{error()}</div>
+        </Show>
+
         <div class="controls">
           <button
             onClick={toggleSoundCheck}
@@ -465,9 +506,7 @@ export const CallPanel = () => {
             <button
               onClick={() => { if (soundChecking()) stopSoundCheck(); startMic(); }}
               class="btn"
-              disabled={
-                loadingLLM() || loadingTTS() || !llmModel() || !ttsEngine()
-              }
+              disabled={loadingLLM() || loadingTTS() || !llmModel() || !ttsEngine()}
             >
               {loadingLLM()
                 ? "Loading model..."
@@ -478,9 +517,7 @@ export const CallPanel = () => {
             <button
               onClick={() => fileInput.click()}
               class="btn btn-secondary"
-              disabled={
-                loadingLLM() || loadingTTS() || !llmModel() || !ttsEngine()
-              }
+              disabled={loadingLLM() || loadingTTS() || !llmModel() || !ttsEngine()}
             >
               Upload Audio
             </button>
@@ -493,49 +530,12 @@ export const CallPanel = () => {
             />
           </Show>
         </div>
-
-        <textarea
-          value={systemPrompt()}
-          onInput={(e) => setSystemPrompt(e.currentTarget.value)}
-          class="prompt"
-          disabled={isStreaming()}
-          rows={2}
-          placeholder="System prompt..."
-        />
-
-        <Show when={isStreaming() || soundChecking()}>
-          <VUMeter level={micLevel()} />
-        </Show>
-
-        <Show when={error()}>
-          <div class="error-box">{error()}</div>
-        </Show>
-
-        <div class="transcript-box">
-          <h3 class="transcript-heading">Transcript</h3>
-          <For each={transcripts()}>
-            {(t) => (
-              <p
-                class={`transcript-line ${t.role === "agent" ? "transcript-agent" : "transcript-user"}`}
-              >
-                <strong>{t.role === "agent" ? "Agent: " : "You: "}</strong>
-                {t.text}
-              </p>
-            )}
-          </For>
-          <Show when={llmResponse()}>
-            <p class="transcript-streaming">
-              <strong>Agent: </strong>
-              {llmResponse()}
-            </p>
-          </Show>
-          <Show when={transcripts().length === 0 && !llmResponse()}>
-            <p class="transcript-placeholder">Waiting for audio input...</p>
-          </Show>
-        </div>
       </div>
 
-      <MetricsPanel metrics={latestMetrics()} history={metricsHistory()} />
+      {/* ── Right Sidebar: Metrics ── */}
+      <div class="sidebar-right">
+        <MetricsPanel metrics={latestMetrics()} history={metricsHistory()} />
+      </div>
     </div>
   );
 };
@@ -550,6 +550,27 @@ const Tooltip = (props) => (
     <span class="tooltip">{props.text}</span>
   </span>
 );
+
+const TranscriptEntry = (props) => {
+  const [showThinking, setShowThinking] = createSignal(false);
+  const isAgent = () => props.role === "agent";
+  return (
+    <div class={`transcript-line ${isAgent() ? "transcript-agent" : "transcript-user"}`}>
+      <p>
+        <strong>{isAgent() ? "Agent: " : "You: "}</strong>
+        {props.text}
+      </p>
+      <Show when={isAgent() && props.thinking}>
+        <button class="thinking-toggle" onClick={() => setShowThinking((v) => !v)}>
+          {showThinking() ? "Hide reasoning" : "Show reasoning"}
+        </button>
+        <Show when={showThinking()}>
+          <pre class="thinking-block">{props.thinking}</pre>
+        </Show>
+      </Show>
+    </div>
+  );
+};
 
 const VUMeter = (props) => {
   const pct = () => Math.min(100, props.level * 500);

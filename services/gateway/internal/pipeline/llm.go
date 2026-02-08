@@ -132,7 +132,7 @@ func (c *LLMClient) consumeStream(resp *http.Response, onToken TokenCallback) (s
 			return fullText, firstTokenTime
 		}
 		if chunk.Content == "" {
-			return fullText, firstTokenTime
+			continue
 		}
 		if firstTokenTime.IsZero() {
 			firstTokenTime = time.Now()

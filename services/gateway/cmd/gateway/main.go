@@ -215,6 +215,11 @@ func main() {
 			slog.Error("list llm models", "error", err)
 			llmModels = []string{cfg.ollamaModel}
 		}
+		loaded, _ := models.ListLoadedLLMs(r.Context(), cfg.ollamaURL)
+		loadedNames := make([]string, 0, len(loaded))
+		for _, m := range loaded {
+			loadedNames = append(loadedNames, m.Name)
+		}
 		resp := map[string]interface{}{
 			"asr": map[string]interface{}{
 				"engines": asrRouter.Engines(),
@@ -222,6 +227,7 @@ func main() {
 			"llm": map[string]interface{}{
 				"active": cfg.ollamaModel,
 				"models": llmModels,
+				"loaded": loadedNames,
 			},
 			"tts": map[string]interface{}{
 				"engines": ttsClient.Engines(),

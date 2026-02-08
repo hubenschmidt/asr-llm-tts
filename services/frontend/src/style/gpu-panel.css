@@ -1,9 +1,10 @@
 .gpu-container {
-  background: #1a1a2e;
-  border-radius: 8px;
-  padding: 12px 16px;
-  margin-bottom: 12px;
-  color: #eee;
+  background: #0f1420;
+  border: 1px solid #1a2535;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  color: #c0c8d8;
 }
 
 .gpu-header {
@@ -14,78 +15,82 @@
 }
 
 .gpu-heading {
-  font-size: 12px;
-  color: #aaa;
+  font-size: 10px;
+  color: #4a6880;
   text-transform: uppercase;
-  letter-spacing: 1px;
+  letter-spacing: 1.5px;
   margin: 0;
+  font-weight: 400;
 }
 
 .gpu-dot {
   display: inline-block;
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
+  box-shadow: 0 0 4px currentColor;
 }
 
 .gpu-bar-track {
-  height: 8px;
-  background: #2a2a3e;
-  border-radius: 4px;
+  height: 6px;
+  background: #0b0e17;
+  border: 1px solid #1a2535;
+  border-radius: 3px;
   overflow: hidden;
 }
 
 .gpu-bar-fill {
   height: 100%;
-  border-radius: 4px;
+  border-radius: 3px;
   transition: width 300ms ease;
 }
 
 .gpu-usage-text {
-  font-size: 12px;
-  color: #888;
+  font-size: 11px;
+  color: #4a6880;
   text-align: right;
   margin-top: 4px;
-  font-family: monospace;
+  font-family: inherit;
 }
 
 .gpu-process-row {
   display: flex;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: 11px;
   padding: 2px 0;
   margin-top: 2px;
 }
 
-.gpu-process-name { color: #ccc; }
-.gpu-process-vram { color: #888; font-family: monospace; }
+.gpu-process-name { color: #c0c8d8; }
+.gpu-process-vram { color: #4a6880; font-family: inherit; }
 
 .gpu-no-data {
-  color: #555;
-  font-size: 12px;
+  color: #2a3545;
+  font-size: 11px;
 }
 
 .gpu-no-processes {
-  color: #555;
-  font-size: 12px;
+  color: #2a3545;
+  font-size: 11px;
   margin: 4px 0 0;
 }
 
 .gpu-unload-btn {
   margin-left: auto;
   padding: 2px 8px;
-  border-radius: 4px;
-  border: 1px solid #555;
-  background: #333;
-  color: #ccc;
+  border-radius: 3px;
+  border: 1px solid #1a2535;
+  background: #0b0e17;
+  color: #4a6880;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 10px;
+  font-family: inherit;
   white-space: nowrap;
+  transition: border-color 150ms, color 150ms;
 }
 
 .gpu-unload-btn:hover {
-  background: #e74c3c;
   border-color: #e74c3c;
-  color: #fff;
+  color: #e74c3c;
 }

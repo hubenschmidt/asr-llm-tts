@@ -5,7 +5,7 @@ export const MetricsPanel = (props) => {
 
   return (
     <div style={containerStyle}>
-      <h3 style={{ margin: "0 0 12px" }}>Pipeline Metrics</h3>
+      <h3 style={titleStyle}>Pipeline Metrics</h3>
 
       <Show when={props.metrics}>
         {(m) => (
@@ -30,25 +30,26 @@ export const MetricsPanel = (props) => {
       </Show>
 
       <Show when={!props.metrics}>
-        <p style={{ color: "#888" }}>No metrics yet</p>
+        <p style={{ color: "#2a3545", "font-style": "italic", "font-size": "11px" }}>No metrics yet</p>
       </Show>
     </div>
   );
 };
 
 const MetricRow = (props) => {
-  const color = () => props.ms > 1000 ? "#e74c3c" : props.ms > 500 ? "#f39c12" : "#2ecc71";
+  const color = () => props.ms > 1000 ? "#e74c3c" : props.ms > 500 ? "#f39c12" : "#00b8d4";
   return (
     <div
       style={{
         display: "flex",
         "justify-content": "space-between",
-        padding: "4px 0",
+        padding: "3px 0",
         "font-weight": props.highlight ? "bold" : "normal",
+        "font-size": "12px",
       }}
     >
-      <span>{props.label}</span>
-      <span style={{ color: color(), "font-family": "monospace" }}>{props.ms.toFixed(0)}ms</span>
+      <span style={{ color: "#4a6880" }}>{props.label}</span>
+      <span style={{ color: color() }}>{props.ms.toFixed(0)}ms</span>
     </div>
   );
 };
@@ -67,18 +68,27 @@ const computeAverages = (history) => {
 };
 
 const containerStyle = {
-  background: "#1a1a2e",
-  "border-radius": "8px",
-  padding: "16px",
-  color: "#eee",
-  width: "220px",
-  "flex-shrink": "0",
+  background: "#0f1420",
+  border: "1px solid #1a2535",
+  "border-radius": "6px",
+  padding: "12px",
+  color: "#c0c8d8",
 };
 
-const sectionStyle = { "margin-bottom": "16px" };
+const titleStyle = {
+  margin: "0 0 12px",
+  "font-size": "10px",
+  color: "#4a6880",
+  "text-transform": "uppercase",
+  "letter-spacing": "1.5px",
+  "font-weight": "400",
+};
+
+const sectionStyle = { "margin-bottom": "14px" };
 
 const headingStyle = {
-  margin: "0 0 8px",
-  "font-size": "14px",
-  color: "#aaa",
+  margin: "0 0 6px",
+  "font-size": "11px",
+  color: "#4a9ec8",
+  "font-weight": "400",
 };

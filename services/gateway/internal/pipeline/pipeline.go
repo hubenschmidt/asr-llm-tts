@@ -156,14 +156,36 @@ func (p *Pipeline) streamLLMWithTTS(ctx context.Context, transcript, ragContext,
 		p.consumeSentences(ctx, sentenceCh, ttsEngine, onEvent, &totalTTSMs, &ttsMu)
 	}()
 
-	// LLM producer — stream tokens, split at sentence boundaries
+	// LLM producer — stream tokens, split at sentence boundaries.
+	// Filter <think>...</think> blocks so TTS doesn't read reasoning aloud.
+	// Uses accumulated text to handle tags that split across token boundaries.
 	var sb sentenceBuffer
+	var rawBuf strings.Builder
+	prevVisible := ""
+
+	addToTTS := func(text string) {
+		if text == "" {
+			return
+		}
+		s := sb.Add(text)
+		if s == "" {
+			return
+		}
+		sentenceCh <- s
+	}
+
 	llmResult, err := p.cfg.LLMClient.Chat(ctx, transcript, ragContext, p.cfg.SystemPrompt, p.cfg.LLMModel, func(token string) {
 		onEvent(Event{Type: "llm_token", Token: token})
-		sentence := sb.Add(token)
-		if sentence != "" {
-			sentenceCh <- sentence
+
+		rawBuf.WriteString(token)
+		visible := stripThinkTags(rawBuf.String())
+
+		if len(visible) <= len(prevVisible) {
+			return
 		}
+		delta := visible[len(prevVisible):]
+		prevVisible = visible
+		addToTTS(delta)
 	})
 
 	// Flush remaining text from sentence buffer
@@ -178,14 +200,31 @@ func (p *Pipeline) streamLLMWithTTS(ctx context.Context, transcript, ragContext,
 		return 0, nil, err
 	}
 
-	slog.Info("llm_response", "text_len", len(llmResult.Text), "llm_ms", llmResult.LatencyMs, "ttft_ms", llmResult.TimeToFirstTokenMs)
-	onEvent(Event{Type: "llm_done", Text: llmResult.Text, LatencyMs: llmResult.LatencyMs})
+	cleanText := stripThinkTags(llmResult.Text)
+	slog.Info("llm_response", "text_len", len(cleanText), "llm_ms", llmResult.LatencyMs, "ttft_ms", llmResult.TimeToFirstTokenMs)
+	onEvent(Event{Type: "llm_done", Text: cleanText, LatencyMs: llmResult.LatencyMs})
 
 	ttsMu.Lock()
 	ttsMs := totalTTSMs
 	ttsMu.Unlock()
 
 	return ttsMs, llmResult, nil
+}
+
+// stripThinkTags removes <think>...</think> blocks from text.
+// Handles incomplete blocks (still streaming) by truncating at the opening tag.
+func stripThinkTags(s string) string {
+	for {
+		openIdx := strings.Index(s, "<think>")
+		if openIdx == -1 {
+			return s
+		}
+		closeIdx := strings.Index(s[openIdx:], "</think>")
+		if closeIdx == -1 {
+			return s[:openIdx]
+		}
+		s = s[:openIdx] + s[openIdx+closeIdx+len("</think>"):]
+	}
 }
 
 func (p *Pipeline) consumeSentences(ctx context.Context, sentenceCh <-chan string, ttsEngine string, onEvent EventCallback, totalMs *float64, mu *sync.Mutex) {
