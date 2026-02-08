@@ -12,9 +12,15 @@ services:
       - ./services/gateway:/app
       - go-mod-cache:/go/pkg/mod
       - go-build-cache:/root/.cache/go-build
-    depends_on:
-      piper:
-        condition: service_healthy
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./docker-compose.yml:/app/docker-compose.yml:ro
+      - ./.env:/app/.env:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
     restart: unless-stopped
 
   frontend:
@@ -28,59 +34,144 @@ services:
       - ./services/frontend/index.html:/app/index.html
       - node-modules:/app/node_modules
     depends_on:
-      - gateway
+      gateway:
+        condition: service_healthy
     restart: unless-stopped
 
-  piper:
-    build:
-      context: ./services/piper
-      dockerfile: Dockerfile
-    ports:
-      - "5100:5100"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5100/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    restart: unless-stopped
+  # qdrant:
+  #   image: qdrant/qdrant:v1.9.4
+  #   ports:
+  #     - "${QDRANT_PORT:-6333}:6333"
+  #   volumes:
+  #     - qdrant-data:/qdrant/storage
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333'"]
+  #     interval: 5s
+  #     timeout: 3s
+  #     retries: 10
+  #     start_period: 5s
+  #   restart: unless-stopped
 
-  prometheus:
-    image: prom/prometheus:v2.51.0
-    ports:
-      - "${PROMETHEUS_PORT:-9090}:9090"
-    volumes:
-      - ./services/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    restart: unless-stopped
+  # --- commented out services ---
 
-  grafana:
-    image: grafana/grafana:10.4.0
-    ports:
-      - "${GRAFANA_PORT:-3002}:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_AUTH_ANONYMOUS_ENABLED=true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
-    volumes:
-      - ./services/monitoring/grafana:/etc/grafana/provisioning
-    depends_on:
-      - prometheus
-    restart: unless-stopped
+  # piper:
+  #   build:
+  #     context: ./services/piper
+  #     dockerfile: Dockerfile
+  #   ports:
+  #     - "5100:5100"
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:5100/health"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #     start_period: 30s
+  #   profiles:
+  #     - ml
+  #   restart: unless-stopped
 
-  loadtest:
-    build:
-      context: ./services/loadtest
-      dockerfile: Dockerfile
-    volumes:
-      - ./samples:/samples:ro
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    profiles:
-      - tools
+  # prometheus:
+  #   image: prom/prometheus:v2.51.0
+  #   ports:
+  #     - "${PROMETHEUS_PORT:-9090}:9090"
+  #   volumes:
+  #     - ./services/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+  #   extra_hosts:
+  #     - "host.docker.internal:host-gateway"
+  #   restart: unless-stopped
+
+  # grafana:
+  #   image: grafana/grafana:10.4.0
+  #   ports:
+  #     - "${GRAFANA_PORT:-3002}:3000"
+  #   environment:
+  #     - GF_SECURITY_ADMIN_PASSWORD=admin
+  #     - GF_AUTH_ANONYMOUS_ENABLED=true
+  #     - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+  #   volumes:
+  #     - ./services/monitoring/grafana:/etc/grafana/provisioning
+  #   depends_on:
+  #     - prometheus
+  #   restart: unless-stopped
+
+  # seed:
+  #   build:
+  #     context: ./services/gateway
+  #     dockerfile: Dockerfile.seed
+  #   command: ["--dir", "/knowledge"]
+  #   env_file: .env
+  #   extra_hosts:
+  #     - "host.docker.internal:host-gateway"
+  #   volumes:
+  #     - ./samples/knowledge:/knowledge:ro
+  #   depends_on:
+  #     qdrant:
+  #       condition: service_healthy
+  #   restart: "no"
+
+  # kokoro:
+  #   image: ghcr.io/remsky/kokoro-fastapi-cpu:v0.2.4
+  #   ports:
+  #     - "8880:8880"
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "curl -sf http://localhost:8880/v1/models || exit 1"]
+  #     interval: 60s
+  #     timeout: 5s
+  #     retries: 5
+  #     start_period: 120s
+  #   profiles:
+  #     - ml
+  #   restart: unless-stopped
+
+  # chatterbox:
+  #   image: travisvn/chatterbox-tts-api
+  #   ports:
+  #     - "8004:5123"
+  #   volumes:
+  #     - chatterbox-cache:/cache
+  #   profiles:
+  #     - ml
+  #   restart: unless-stopped
+
+  # melotts:
+  #   image: timhagel/melotts-api-server
+  #   ports:
+  #     - "8888:8888"
+  #   environment:
+  #     - DEFAULT_SPEED=1.0
+  #   profiles:
+  #     - ml
+  #   restart: unless-stopped
+
+  # faster-whisper:
+  #   image: ghcr.io/speaches-ai/speaches:latest-cpu
+  #   ports:
+  #     - "8100:8000"
+  #   environment:
+  #     - WHISPER__MODEL=tiny-int8
+  #     - WHISPER__DEVICE=cpu
+  #   volumes:
+  #     - faster-whisper-cache:/home/ubuntu/.cache/huggingface/hub
+  #   profiles:
+  #     - ml
+  #   restart: unless-stopped
+
+  # loadtest:
+  #   build:
+  #     context: ./services/loadtest
+  #     dockerfile: Dockerfile
+  #   volumes:
+  #     - ./samples:/samples:ro
+  #   extra_hosts:
+  #     - "host.docker.internal:host-gateway"
+  #   profiles:
+  #     - tools
 
 volumes:
   go-mod-cache:
   go-build-cache:
   node-modules:
+  # qdrant-data:
+  # whisper-rocm-cache:
+  # chatterbox-cache:
+  # faster-whisper-cache:

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { createSignal } from "solid-js";
 
 export interface PipelineMetrics {
   asr_ms: number;
@@ -19,7 +19,10 @@ export interface PipelineEvent {
 }
 
 interface UseAudioStreamOptions {
-  ttsEngine: string;
+  ttsEngine: () => string;
+  sttEngine: () => string;
+  systemPrompt: () => string;
+  llmModel: () => string;
   onTranscript: (text: string) => void;
   onLLMToken: (token: string) => void;
   onLLMDone: (text: string) => void;
@@ -30,30 +33,33 @@ interface UseAudioStreamOptions {
 }
 
 export function useAudioStream(opts: UseAudioStreamOptions) {
-  const [isStreaming, setIsStreaming] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const workletRef = useRef<AudioWorkletNode | null>(null);
-  const ctxRef = useRef<AudioContext | null>(null);
+  const [isStreaming, setIsStreaming] = createSignal(false);
+  let ws: WebSocket | null = null;
+  let mediaStream: MediaStream | null = null;
+  let worklet: AudioWorkletNode | null = null;
+  let audioCtx: AudioContext | null = null;
 
-  const connect = useCallback((): WebSocket => {
+  const connect = (): WebSocket => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/call`);
-    ws.binaryType = "arraybuffer";
+    const socket = new WebSocket(`${protocol}//${window.location.host}/ws/call`);
+    socket.binaryType = "arraybuffer";
 
-    ws.onopen = () => {
-      const sampleRate = ctxRef.current?.sampleRate ?? 48000;
-      ws.send(
+    socket.onopen = () => {
+      const sampleRate = audioCtx?.sampleRate ?? 48000;
+      socket.send(
         JSON.stringify({
           codec: "pcm",
           sample_rate: sampleRate,
-          tts_engine: opts.ttsEngine,
+          tts_engine: opts.ttsEngine(),
+          stt_engine: opts.sttEngine(),
+          system_prompt: opts.systemPrompt(),
+          llm_model: opts.llmModel(),
           mode: "conversation",
         }),
       );
     };
 
-    ws.onmessage = (ev) => {
+    socket.onmessage = (ev) => {
       if (ev.data instanceof ArrayBuffer) {
         opts.onAudio(ev.data);
         return;
@@ -76,30 +82,29 @@ export function useAudioStream(opts: UseAudioStreamOptions) {
       handlers[event.type]?.();
     };
 
-    ws.onerror = () => opts.onError("WebSocket error");
+    socket.onerror = () => opts.onError("WebSocket error");
 
-    wsRef.current = ws;
-    return ws;
-  }, [opts]);
+    ws = socket;
+    return socket;
+  };
 
-  const startMic = useCallback(async () => {
+  const startMic = async () => {
     try {
-      const audioCtx = new AudioContext();
-      ctxRef.current = audioCtx;
-      const ws = connect();
+      audioCtx = new AudioContext();
+      const socket = connect();
 
       await audioCtx.audioWorklet.addModule(createWorkletURL());
 
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true },
       });
-      mediaStreamRef.current = stream;
+      mediaStream = stream;
 
       const source = audioCtx.createMediaStreamSource(stream);
-      const worklet = new AudioWorkletNode(audioCtx, "pcm-sender");
-      workletRef.current = worklet;
+      const node = new AudioWorkletNode(audioCtx, "pcm-sender");
+      worklet = node;
 
-      worklet.port.onmessage = (ev) => {
+      node.port.onmessage = (ev) => {
         const float32 = ev.data as Float32Array;
 
         if (opts.onLevel) {
@@ -108,75 +113,70 @@ export function useAudioStream(opts: UseAudioStreamOptions) {
           opts.onLevel(Math.sqrt(sum / float32.length));
         }
 
-        if (ws.readyState !== WebSocket.OPEN) return;
+        if (socket.readyState !== WebSocket.OPEN) return;
 
         const pcm16 = new Int16Array(float32.length);
         for (let i = 0; i < float32.length; i++) {
           pcm16[i] = Math.max(-32768, Math.min(32767, float32[i] * 32767));
         }
-        ws.send(pcm16.buffer);
+        socket.send(pcm16.buffer);
       };
 
-      source.connect(worklet);
-      worklet.connect(audioCtx.destination);
+      source.connect(node);
+      node.connect(audioCtx.destination);
       setIsStreaming(true);
     } catch (err) {
       opts.onError(`Mic start failed: ${err instanceof Error ? err.message : err}`);
     }
-  }, [connect, opts]);
+  };
 
-  const startFile = useCallback(
-    async (file: File) => {
-      const ws = connect();
-      const audioCtx = new AudioContext({ sampleRate: 16000 });
-      const arrayBuf = await file.arrayBuffer();
-      const audioBuf = await audioCtx.decodeAudioData(arrayBuf);
-      const samples = audioBuf.getChannelData(0);
+  const startFile = async (file: File) => {
+    const socket = connect();
+    const ctx = new AudioContext({ sampleRate: 16000 });
+    const arrayBuf = await file.arrayBuffer();
+    const audioBuf = await ctx.decodeAudioData(arrayBuf);
+    const samples = audioBuf.getChannelData(0);
 
-      // Wait for WebSocket to open
-      await new Promise<void>((resolve) => {
-        if (ws.readyState === WebSocket.OPEN) return resolve();
-        const origOpen = ws.onopen;
-        ws.onopen = (ev) => {
-          if (origOpen) (origOpen as (ev: Event) => void)(ev);
-          resolve();
-        };
-      });
+    await new Promise<void>((resolve) => {
+      if (socket.readyState === WebSocket.OPEN) return resolve();
+      const origOpen = socket.onopen;
+      socket.onopen = (ev) => {
+        if (origOpen) (origOpen as (ev: Event) => void)(ev);
+        resolve();
+      };
+    });
 
-      // Stream chunks at ~real-time rate (320 samples = 20ms at 16kHz)
-      const chunkSize = 320;
-      setIsStreaming(true);
+    const chunkSize = 320;
+    setIsStreaming(true);
 
-      for (let i = 0; i < samples.length; i += chunkSize) {
-        if (ws.readyState !== WebSocket.OPEN) break;
+    for (let i = 0; i < samples.length; i += chunkSize) {
+      if (socket.readyState !== WebSocket.OPEN) break;
 
-        const chunk = samples.slice(i, i + chunkSize);
-        const pcm16 = new Int16Array(chunk.length);
-        for (let j = 0; j < chunk.length; j++) {
-          pcm16[j] = Math.max(-32768, Math.min(32767, chunk[j] * 32767));
-        }
-        ws.send(pcm16.buffer);
-        await new Promise((r) => setTimeout(r, 20));
+      const chunk = samples.slice(i, i + chunkSize);
+      const pcm16 = new Int16Array(chunk.length);
+      for (let j = 0; j < chunk.length; j++) {
+        pcm16[j] = Math.max(-32768, Math.min(32767, chunk[j] * 32767));
       }
+      socket.send(pcm16.buffer);
+      await new Promise((r) => setTimeout(r, 20));
+    }
 
-      ws.close();
-      audioCtx.close();
-      setIsStreaming(false);
-    },
-    [connect],
-  );
-
-  const stop = useCallback(() => {
-    mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
-    workletRef.current?.disconnect();
-    ctxRef.current?.close();
-    wsRef.current?.close();
-    mediaStreamRef.current = null;
-    workletRef.current = null;
-    ctxRef.current = null;
-    wsRef.current = null;
+    socket.close();
+    ctx.close();
     setIsStreaming(false);
-  }, []);
+  };
+
+  const stop = () => {
+    mediaStream?.getTracks().forEach((t) => t.stop());
+    worklet?.disconnect();
+    audioCtx?.close();
+    ws?.close();
+    mediaStream = null;
+    worklet = null;
+    audioCtx = null;
+    ws = null;
+    setIsStreaming(false);
+  };
 
   return { isStreaming, startMic, startFile, stop };
 }

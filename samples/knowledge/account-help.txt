@@ -1,0 +1,11 @@
+Account and Billing Help
+
+To reset your password, click "Forgot Password" on the login page and enter your email address. A reset link will be sent within a few minutes. The link expires after one hour.
+
+To update your billing information, go to Account Settings and select Payment Methods. You can add, remove, or set a default payment method. We accept Visa, Mastercard, American Express, and PayPal.
+
+Subscription plans can be changed at any time from Account Settings. When upgrading, the price difference is prorated for the remaining billing period. When downgrading, the new rate takes effect at the next billing cycle.
+
+To cancel your subscription, go to Account Settings and select Subscription. Click Cancel Subscription and confirm. You will retain access until the end of your current billing period. No refunds are issued for partial billing periods.
+
+If you see an unauthorized charge on your account, contact our support team immediately. We will investigate and reverse any fraudulent charges within 48 hours.

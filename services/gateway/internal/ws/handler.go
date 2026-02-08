@@ -12,6 +12,7 @@ import (
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/audio"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/metrics"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/pipeline"
+	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/prompts"
 )
 
 var upgrader = websocket.Upgrader{
@@ -22,11 +23,13 @@ var upgrader = websocket.Upgrader{
 
 // HandlerConfig holds the shared backend clients for all call sessions.
 type HandlerConfig struct {
-	ASRClient      *pipeline.ASRClient
+	ASRClient      *pipeline.ASRRouter
 	LLMClient      *pipeline.LLMClient
-	TTSClient      *pipeline.TTSClient
+	TTSClient      *pipeline.TTSRouter
 	VADConfig      audio.VADConfig
 	MaxConcurrent  int
+	RAGClient      *pipeline.RAGClient
+	CallHistory    *pipeline.CallHistoryClient
 }
 
 // Handler manages WebSocket call sessions with admission control.
@@ -49,10 +52,13 @@ func NewHandler(cfg HandlerConfig) *Handler {
 
 // callMetadata is the first text frame sent by the client.
 type callMetadata struct {
-	Codec      string `json:"codec"`
-	SampleRate int    `json:"sample_rate"`
-	TTSEngine  string `json:"tts_engine"`
-	Mode       string `json:"mode"`
+	Codec        string `json:"codec"`
+	SampleRate   int    `json:"sample_rate"`
+	TTSEngine    string `json:"tts_engine"`
+	STTEngine    string `json:"stt_engine"`
+	Mode         string `json:"mode"`
+	SystemPrompt string `json:"system_prompt"`
+	LLMModel     string `json:"llm_model"`
 }
 
 // ServeHTTP upgrades the connection and runs the call session.
@@ -95,32 +101,43 @@ func (h *Handler) runSession(conn *websocket.Conn) {
 	if ttsEngine == "" {
 		ttsEngine = "fast"
 	}
+	sttEngine := meta.STTEngine
+	if sttEngine == "" {
+		sttEngine = "whisper.cpp"
+	}
 
 	sampleRate := meta.SampleRate
 	if sampleRate <= 0 {
 		sampleRate = 16000
 	}
 
-	slog.Info("call started", "codec", codec, "sample_rate", sampleRate, "tts_engine", ttsEngine, "mode", meta.Mode)
+	sessionID := pipeline.GenerateUUID()
+	systemPrompt := prompts.ForSession(meta.SystemPrompt)
+	slog.Info("call started", "session_id", sessionID, "codec", codec, "sample_rate", sampleRate, "tts_engine", ttsEngine, "stt_engine", sttEngine)
 
 	pipe := pipeline.New(pipeline.Config{
-		ASRClient: h.cfg.ASRClient,
-		LLMClient: h.cfg.LLMClient,
-		TTSClient: h.cfg.TTSClient,
-		VADConfig: h.cfg.VADConfig,
+		ASRClient:    h.cfg.ASRClient,
+		LLMClient:    h.cfg.LLMClient,
+		TTSClient:    h.cfg.TTSClient,
+		VADConfig:    h.cfg.VADConfig,
+		RAGClient:    h.cfg.RAGClient,
+		CallHistory:  h.cfg.CallHistory,
+		SessionID:    sessionID,
+		SystemPrompt: systemPrompt,
+		LLMModel:     meta.LLMModel,
 	})
 
 	sendEvent := newEventSender(conn)
-	processMessages(ctx, conn, pipe, codec, sampleRate, ttsEngine, sendEvent)
+	processMessages(ctx, conn, pipe, codec, sampleRate, ttsEngine, sttEngine, sendEvent)
 
-	if err = pipe.Flush(ctx, ttsEngine, sendEvent); err != nil {
+	if err = pipe.Flush(ctx, ttsEngine, sttEngine, sendEvent); err != nil {
 		slog.Error("flush", "error", err)
 	}
 
 	slog.Info("call ended")
 }
 
-func processMessages(ctx context.Context, conn *websocket.Conn, pipe *pipeline.Pipeline, codec audio.Codec, sampleRate int, ttsEngine string, sendEvent pipeline.EventCallback) {
+func processMessages(ctx context.Context, conn *websocket.Conn, pipe *pipeline.Pipeline, codec audio.Codec, sampleRate int, ttsEngine, sttEngine string, sendEvent pipeline.EventCallback) {
 	for {
 		msgType, data, err := conn.ReadMessage()
 		if err != nil {
@@ -132,7 +149,7 @@ func processMessages(ctx context.Context, conn *websocket.Conn, pipe *pipeline.P
 			return
 		}
 
-		if err = pipe.ProcessChunk(ctx, data, codec, sampleRate, ttsEngine, sendEvent); err != nil {
+		if err = pipe.ProcessChunk(ctx, data, codec, sampleRate, ttsEngine, sttEngine, sendEvent); err != nil {
 			slog.Error("process chunk", "error", err)
 			sendEvent(pipeline.Event{Type: "error", Text: err.Error()})
 		}

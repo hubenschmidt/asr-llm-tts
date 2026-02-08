@@ -4,6 +4,12 @@ Real-time voice pipeline for call center automation. Speak into the mic, get a t
 
 ![Conversation Demo](spec/screenshots/conversation-demo.png)
 
+The pipeline has three stages:
+
+1. **Speech Model (ASR)** — Converts your voice audio into a text transcript. Larger models transcribe more accurately but are slower. English-only (.en) models are faster for English speech.
+2. **Language Model (LLM)** — Reads the transcript and generates a text reply. This is the "brain" — it determines the content and quality of the response. Does not affect transcription.
+3. **TTS Voice** — Converts the LLM's text reply into spoken audio you hear back. Choose between Fast (low latency) or Quality (better voice).
+
 Browser captures mic audio over WebSocket. Gateway decodes, re-samples to 16kHz, and runs energy-based voice activity detector. When speech ends, post to whisper.cpp for transcription, stream the transcript to Ollama for a response, and pipe each completed sentence to Piper TTS while the LLM is still generating. Audio is sent via WebSocket. GPU-bound services (whisper.cpp, Ollama) run on the host for direct ROCm access (I am running an AMD GPU).
 
 The gateway uses pipeline architecture. Each WebSocket connection gets its own goroutine with context-based cancellation. LLM and TTS stages overlap via channels so you hear the first sentence before the LLM finishes generating. A semaphore caps concurrent calls at a configurable limit (default 100), returning 503 when full.

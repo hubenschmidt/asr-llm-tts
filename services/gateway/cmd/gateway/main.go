@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,8 +13,13 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"encoding/json"
+
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/audio"
+	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/models"
+	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/orchestrator"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/pipeline"
+	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/prompts"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/ws"
 )
 
@@ -22,16 +28,82 @@ func main() {
 
 	cfg := loadConfig()
 
-	asrClient := pipeline.NewASRClient(cfg.whisperURL, cfg.asrPoolSize)
+	// Service orchestrator
+	svcRegistry := orchestrator.NewRegistry(map[string]orchestrator.ServiceMeta{
+		"whisper-server": {
+			Category:   "stt",
+			HealthURL:  cfg.whisperServerURL,
+			ControlURL: cfg.whisperControlURL,
+		},
+	})
+	svcMgr := orchestrator.NewHTTPControlManager(svcRegistry)
+
+	// ASR backends
+	asrBackends := map[string]pipeline.ASRTranscriber{}
+	if cfg.fasterWhisperURL != "" {
+		asrBackends["faster-whisper"] = pipeline.NewFasterWhisperClient(cfg.fasterWhisperURL, "tiny-int8", cfg.asrPoolSize)
+	}
+	if cfg.whisperServerURL != "" {
+		asrBackends["whisper-server"] = pipeline.NewASRClient(cfg.whisperServerURL, cfg.asrPoolSize)
+	}
+	asrRouter := pipeline.NewASRRouter(asrBackends, "whisper-server")
+
 	llmClient := pipeline.NewLLMClient(cfg.ollamaURL, cfg.ollamaModel, cfg.llmSystemPrompt, cfg.llmMaxTokens, cfg.llmPoolSize)
-	ttsClient := pipeline.NewTTSClient(cfg.piperURL, cfg.ttsPoolSize)
+	ttsHTTP := pipeline.NewPooledHTTPClient(cfg.ttsPoolSize, 30*time.Second)
+	ttsBackends := map[string]pipeline.TTSSynthesizer{
+		"fast":    pipeline.NewPiperSynthesizer(cfg.piperURL, "en_US-lessac-low", ttsHTTP),
+		"quality": pipeline.NewPiperSynthesizer(cfg.piperURL, "en_US-lessac-medium", ttsHTTP),
+		"high":    pipeline.NewPiperSynthesizer(cfg.piperURL, "en_US-lessac-high", ttsHTTP),
+	}
+	if cfg.kokoroURL != "" {
+		ttsBackends["kokoro"] = pipeline.NewOpenAISynthesizer(cfg.kokoroURL, "kokoro", "af_heart", ttsHTTP)
+	}
+	if cfg.chatterboxURL != "" {
+		ttsBackends["chatterbox"] = pipeline.NewOpenAISynthesizer(cfg.chatterboxURL, "chatterbox", "default", ttsHTTP)
+	}
+	if cfg.melottsURL != "" {
+		ttsBackends["melotts"] = pipeline.NewMeloSynthesizer(cfg.melottsURL, ttsHTTP)
+	}
+	if cfg.elevenlabsAPIKey != "" {
+		ttsBackends["elevenlabs"] = pipeline.NewElevenLabsSynthesizer(cfg.elevenlabsAPIKey, cfg.elevenlabsVoiceID, cfg.elevenlabsModelID, ttsHTTP)
+	}
+	ttsClient := pipeline.NewTTSRouter(ttsBackends, "fast")
+
+	var ragClient *pipeline.RAGClient
+	var callHistory *pipeline.CallHistoryClient
+
+	if cfg.qdrantURL != "" {
+		embedClient := pipeline.NewEmbeddingClient(cfg.ollamaURL, cfg.embeddingModel, cfg.llmPoolSize)
+		qdrantClient := pipeline.NewQdrantClient(cfg.qdrantURL, cfg.qdrantPoolSize)
+
+		initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := qdrantClient.EnsureCollection(initCtx, "knowledge_base", cfg.vectorSize); err != nil {
+			slog.Warn("qdrant knowledge_base collection", "error", err)
+		}
+		if err := qdrantClient.EnsureCollection(initCtx, "call_history", cfg.vectorSize); err != nil {
+			slog.Warn("qdrant call_history collection", "error", err)
+		}
+		initCancel()
+
+		ragClient = pipeline.NewRAGClient(pipeline.RAGConfig{
+			Embedder:       embedClient,
+			Qdrant:         qdrantClient,
+			Collection:     "knowledge_base",
+			TopK:           cfg.ragTopK,
+			ScoreThreshold: cfg.ragScoreThreshold,
+		})
+		callHistory = pipeline.NewCallHistoryClient(embedClient, qdrantClient, "call_history")
+		slog.Info("rag enabled", "qdrant", cfg.qdrantURL, "embedding_model", cfg.embeddingModel)
+	}
 
 	handler := ws.NewHandler(ws.HandlerConfig{
-		ASRClient:     asrClient,
+		ASRClient:     asrRouter,
 		LLMClient:     llmClient,
 		TTSClient:     ttsClient,
 		VADConfig:     cfg.vadConfig,
 		MaxConcurrent: cfg.maxConcurrentCalls,
+		RAGClient:     ragClient,
+		CallHistory:   callHistory,
 	})
 
 	mux := http.NewServeMux()
@@ -40,6 +112,187 @@ func main() {
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
+	})
+	mux.HandleFunc("/api/models", func(w http.ResponseWriter, r *http.Request) {
+		llmModels, err := models.ListLLMModels(r.Context(), cfg.ollamaURL)
+		if err != nil {
+			slog.Error("list llm models", "error", err)
+			llmModels = []string{cfg.ollamaModel}
+		}
+		resp := map[string]interface{}{
+			"asr": map[string]interface{}{
+				"engines": asrRouter.Engines(),
+			},
+			"llm": map[string]interface{}{
+				"active": cfg.ollamaModel,
+				"models": llmModels,
+			},
+			"tts": map[string]interface{}{
+				"engines": ttsClient.Engines(),
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	})
+	mux.HandleFunc("/api/models/preload", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		slog.Info("preloading llm model", "model", req.Model)
+		if err := models.PreloadLLM(r.Context(), cfg.ollamaURL, req.Model); err != nil {
+			slog.Error("preload model", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		slog.Info("model preloaded", "model", req.Model)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
+	mux.HandleFunc("/api/models/unload", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Type  string `json:"type"`
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if req.Type == "llm" {
+			slog.Info("unloading llm model", "model", req.Model)
+			if err := models.UnloadLLM(r.Context(), cfg.ollamaURL, req.Model); err != nil {
+				slog.Error("unload model", "error", err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			loaded, err := models.ListLoadedLLMs(r.Context(), cfg.ollamaURL)
+			if err != nil {
+				slog.Warn("list loaded models after unload", "error", err)
+			}
+			names := make([]string, len(loaded))
+			for i, m := range loaded {
+				names[i] = m.Name
+			}
+			slog.Info("model unloaded", "model", req.Model, "still_loaded", names)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
+	mux.HandleFunc("/api/tts/warmup", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Engine string `json:"engine"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if !ttsClient.HasEngine(req.Engine) {
+			http.Error(w, "engine not available", http.StatusNotFound)
+			return
+		}
+		slog.Info("warming up tts engine", "engine", req.Engine)
+		_, err := ttsClient.Synthesize(r.Context(), "Hello.", req.Engine)
+		if err != nil {
+			slog.Error("tts warmup", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		slog.Info("tts engine warmed up", "engine", req.Engine)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
+	mux.HandleFunc("/api/tts/health", func(w http.ResponseWriter, r *http.Request) {
+		engine := r.URL.Query().Get("engine")
+		if !ttsClient.HasEngine(engine) {
+			http.Error(w, "engine not available", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "engine": engine})
+	})
+
+	mux.HandleFunc("GET /api/gpu", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.whisperControlURL == "" {
+			http.Error(w, "no control server configured", http.StatusServiceUnavailable)
+			return
+		}
+		req, err := http.NewRequestWithContext(r.Context(), "GET", cfg.whisperControlURL+"/gpu", nil)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			slog.Error("gpu info fetch failed", "error", err)
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set("Content-Type", "application/json")
+		io.Copy(w, resp.Body)
+	})
+
+	mux.HandleFunc("GET /api/services", func(w http.ResponseWriter, r *http.Request) {
+		services, err := svcMgr.StatusAll(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(services)
+	})
+	mux.HandleFunc("POST /api/services/{name}/start", func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		slog.Info("service start requested", "name", name)
+		if err := svcMgr.Start(r.Context(), name); err != nil {
+			slog.Error("service start failed", "name", name, "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		slog.Info("service started", "name", name)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(map[string]string{"status": "starting"})
+	})
+	mux.HandleFunc("POST /api/services/{name}/stop", func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		slog.Info("service stop requested", "name", name)
+		if err := svcMgr.Stop(r.Context(), name); err != nil {
+			slog.Error("service stop failed", "name", name, "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		slog.Info("service stopped", "name", name)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "stopped"})
+	})
+	mux.HandleFunc("GET /api/services/{name}/status", func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		info, err := svcMgr.Status(r.Context(), name)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(info)
 	})
 
 	addr := ":" + cfg.port
@@ -50,8 +303,28 @@ func main() {
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		sig := <-sigCh
 		slog.Info("shutting down", "signal", sig)
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
+
+		// Unload Ollama models
+		slog.Info("unloading ollama models")
+		if err := models.UnloadAllLLMs(ctx, cfg.ollamaURL); err != nil {
+			slog.Warn("ollama unload", "error", err)
+		}
+
+		// Stop all ML services
+		slog.Info("stopping ML services")
+		svcs, _ := svcMgr.StatusAll(ctx)
+		for _, svc := range svcs {
+			if svc.Status == orchestrator.StatusStopped {
+				continue
+			}
+			slog.Info("stopping service", "name", svc.Name)
+			if err := svcMgr.Stop(ctx, svc.Name); err != nil {
+				slog.Warn("stop service", "name", svc.Name, "error", err)
+			}
+		}
+
 		srv.Shutdown(ctx)
 	}()
 
@@ -66,9 +339,8 @@ func main() {
 }
 
 type config struct {
-	port               string
-	whisperURL         string
-	ollamaURL          string
+	port      string
+	ollamaURL string
 	ollamaModel        string
 	llmSystemPrompt    string
 	llmMaxTokens       int
@@ -78,6 +350,21 @@ type config struct {
 	ttsPoolSize        int
 	maxConcurrentCalls int
 	vadConfig          audio.VADConfig
+	qdrantURL          string
+	qdrantPoolSize     int
+	embeddingModel     string
+	vectorSize         int
+	ragTopK            int
+	ragScoreThreshold  float64
+	kokoroURL string
+	chatterboxURL      string
+	melottsURL         string
+	fasterWhisperURL   string
+	whisperServerURL   string
+	whisperControlURL  string
+	elevenlabsAPIKey   string
+	elevenlabsVoiceID  string
+	elevenlabsModelID  string
 }
 
 func loadConfig() config {
@@ -85,11 +372,10 @@ func loadConfig() config {
 	vad.SpeechThresholdDB = envFloat("VAD_SPEECH_THRESHOLD_DB", vad.SpeechThresholdDB)
 
 	return config{
-		port:               envStr("GATEWAY_PORT", "8000"),
-		whisperURL:         envStr("WHISPER_URL", "http://localhost:8178"),
-		ollamaURL:          envStr("OLLAMA_URL", "http://localhost:11434"),
+		port:      envStr("GATEWAY_PORT", "8000"),
+		ollamaURL: envStr("OLLAMA_URL", "http://localhost:11434"),
 		ollamaModel:        envStr("OLLAMA_MODEL", "llama3.2:3b"),
-		llmSystemPrompt:    envStr("LLM_SYSTEM_PROMPT", "You are a helpful call center agent. Keep responses concise and conversational."),
+		llmSystemPrompt:    envStr("LLM_SYSTEM_PROMPT", prompts.DefaultSystem),
 		llmMaxTokens:       envInt("LLM_MAX_TOKENS", 150),
 		piperURL:           envStr("PIPER_URL", "http://localhost:5100"),
 		asrPoolSize:        envInt("ASR_POOL_SIZE", 50),
@@ -97,6 +383,21 @@ func loadConfig() config {
 		ttsPoolSize:        envInt("TTS_POOL_SIZE", 50),
 		maxConcurrentCalls: envInt("MAX_CONCURRENT_CALLS", 100),
 		vadConfig:          vad,
+		qdrantURL:          envStr("QDRANT_URL", ""),
+		qdrantPoolSize:     envInt("QDRANT_POOL_SIZE", 10),
+		embeddingModel:     envStr("EMBEDDING_MODEL", "nomic-embed-text"),
+		vectorSize:         envInt("VECTOR_SIZE", 768),
+		ragTopK:            envInt("RAG_TOP_K", 3),
+		ragScoreThreshold:  envFloat("RAG_SCORE_THRESHOLD", 0.7),
+		kokoroURL: envStr("KOKORO_URL", ""),
+		chatterboxURL:      envStr("CHATTERBOX_URL", ""),
+		melottsURL:         envStr("MELOTTS_URL", ""),
+		fasterWhisperURL:   envStr("FASTER_WHISPER_URL", ""),
+		whisperServerURL:   envStr("WHISPER_SERVER_URL", ""),
+		whisperControlURL:  envStr("WHISPER_CONTROL_URL", ""),
+		elevenlabsAPIKey:   envStr("ELEVENLABS_API_KEY", ""),
+		elevenlabsVoiceID:  envStr("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"),
+		elevenlabsModelID:  envStr("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5"),
 	}
 }
 

@@ -26,6 +26,11 @@ RUN curl -L -o /models/en_US-lessac-medium.onnx \
     curl -L -o /models/en_US-lessac-medium.onnx.json \
       "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json"
 
+RUN curl -L -o /models/en_US-lessac-high.onnx \
+      "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/high/en_US-lessac-high.onnx" && \
+    curl -L -o /models/en_US-lessac-high.onnx.json \
+      "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/high/en_US-lessac-high.onnx.json"
+
 COPY --from=builder /piper-server /piper-server
 EXPOSE 5100
 CMD ["/piper-server"]

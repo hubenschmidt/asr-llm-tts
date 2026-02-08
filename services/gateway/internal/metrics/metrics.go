@@ -42,4 +42,16 @@ var (
 		Name: "vad_speech_segments_total",
 		Help: "Speech segments detected by VAD",
 	})
+
+	EmbeddingDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "pipeline_embedding_duration_seconds",
+		Help:    "Embedding generation latency",
+		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.2, 0.5},
+	})
+
+	RAGDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "pipeline_rag_duration_seconds",
+		Help:    "RAG retrieval latency (embed + search)",
+		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.2, 0.5},
+	})
 )

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/metrics"
+	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/prompts"
 )
 
 // LLMClient streams chat completions from Ollama.
@@ -43,10 +44,12 @@ type LLMResult struct {
 type TokenCallback func(token string)
 
 // Chat sends a user message to Ollama and streams the response.
-func (c *LLMClient) Chat(ctx context.Context, userMessage string, onToken TokenCallback) (*LLMResult, error) {
+// systemPrompt overrides the client default when non-empty.
+// ragContext is injected as a second system message when non-empty.
+func (c *LLMClient) Chat(ctx context.Context, userMessage, ragContext, systemPrompt, model string, onToken TokenCallback) (*LLMResult, error) {
 	start := time.Now()
 
-	resp, err := c.postChatRequest(ctx, userMessage)
+	resp, err := c.postChatRequest(ctx, userMessage, ragContext, systemPrompt, model)
 	if err != nil {
 		return nil, err
 	}
@@ -74,17 +77,28 @@ func (c *LLMClient) Chat(ctx context.Context, userMessage string, onToken TokenC
 	}, nil
 }
 
-func (c *LLMClient) postChatRequest(ctx context.Context, userMessage string) (*http.Response, error) {
+func (c *LLMClient) postChatRequest(ctx context.Context, userMessage, ragContext, systemPrompt, model string) (*http.Response, error) {
+	sysPrompt := c.systemPrompt
+	if systemPrompt != "" {
+		sysPrompt = systemPrompt
+	}
+	useModel := c.model
+	if model != "" {
+		useModel = model
+	}
+	messages := []ollamaMessage{
+		{Role: "system", Content: sysPrompt},
+	}
+	if ragContext != "" {
+		messages = append(messages, ollamaMessage{Role: "system", Content: prompts.RAGContext(ragContext)})
+	}
+	messages = append(messages, ollamaMessage{Role: "user", Content: userMessage})
+
 	reqBody := ollamaRequest{
-		Model:  c.model,
-		Stream: true,
-		Options: ollamaOptions{
-			NumPredict: c.maxTokens,
-		},
-		Messages: []ollamaMessage{
-			{Role: "system", Content: c.systemPrompt},
-			{Role: "user", Content: userMessage},
-		},
+		Model:   useModel,
+		Stream:  true,
+		Options: ollamaOptions{NumPredict: c.maxTokens},
+		Messages: messages,
 	}
 
 	bodyBytes, err := json.Marshal(reqBody)

@@ -10,13 +10,11 @@ services/gateway/tmp/
 services/piper/tmp/
 services/piper/piper
 services/loadtest/loadtest
+cmd/whisper-control/whisper-control
 
 # Node
 node_modules/
 dist/
-
-# Environment
-.env
 
 # OS
 .DS_Store

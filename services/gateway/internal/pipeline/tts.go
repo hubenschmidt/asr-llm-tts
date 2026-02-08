@@ -12,27 +12,9 @@ import (
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/metrics"
 )
 
-// TTSClient synthesizes speech from text via Piper HTTP API.
-// Supports "fast" (low quality voice) and "quality" (medium quality voice) modes.
-type TTSClient struct {
-	piperURL string
-	client   *http.Client
-}
-
-// NewTTSClient creates a TTS client pointing at the Piper service.
-func NewTTSClient(piperURL string, poolSize int) *TTSClient {
-	return &TTSClient{
-		piperURL: piperURL,
-		client:   NewPooledHTTPClient(poolSize, 30*time.Second),
-	}
-}
-
-// Voice models mapped by engine mode.
-var voiceModels = map[string]string{
-	"fast":    "en_US-lessac-low",
-	"quality": "en_US-lessac-medium",
-	"piper":   "en_US-lessac-low",
-	"coqui":   "en_US-lessac-medium",
+// TTSSynthesizer produces audio from text.
+type TTSSynthesizer interface {
+	SynthesizeAudio(ctx context.Context, text string) ([]byte, error)
 }
 
 // TTSResult holds synthesized audio with timing.
@@ -41,38 +23,33 @@ type TTSResult struct {
 	LatencyMs float64 `json:"latency_ms"`
 }
 
-// Synthesize converts text to speech. Engine selects voice: "fast" or "quality".
-func (c *TTSClient) Synthesize(ctx context.Context, text, engine string) (*TTSResult, error) {
+// TTSRouter dispatches to the correct TTS backend based on engine name.
+type TTSRouter struct {
+	backends map[string]TTSSynthesizer
+	fallback string
+}
+
+// NewTTSRouter creates a router with registered backends.
+func NewTTSRouter(backends map[string]TTSSynthesizer, fallback string) *TTSRouter {
+	return &TTSRouter{backends: backends, fallback: fallback}
+}
+
+// Synthesize routes to the correct backend and wraps the result with timing.
+func (r *TTSRouter) Synthesize(ctx context.Context, text, engine string) (*TTSResult, error) {
 	start := time.Now()
 
-	voice := resolveVoice(engine)
-
-	reqBody, err := json.Marshal(ttsRequest{Text: text, Voice: voice})
-	if err != nil {
-		return nil, fmt.Errorf("marshal tts request: %w", err)
+	backend, ok := r.backends[engine]
+	if !ok {
+		backend, ok = r.backends[r.fallback]
+	}
+	if !ok {
+		return nil, fmt.Errorf("no TTS backend for engine %q", engine)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", c.piperURL+"/synthesize", bytes.NewReader(reqBody))
+	audioData, err := backend.SynthesizeAudio(ctx, text)
 	if err != nil {
-		return nil, fmt.Errorf("create tts request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		metrics.Errors.WithLabelValues("tts", "http").Inc()
-		return nil, fmt.Errorf("tts request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		metrics.Errors.WithLabelValues("tts", "status").Inc()
-		return nil, fmt.Errorf("tts status %d", resp.StatusCode)
-	}
-
-	audioData, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read tts response: %w", err)
+		metrics.Errors.WithLabelValues("tts", "synth").Inc()
+		return nil, err
 	}
 
 	latency := time.Since(start)
@@ -84,15 +61,161 @@ func (c *TTSClient) Synthesize(ctx context.Context, text, engine string) (*TTSRe
 	}, nil
 }
 
-func resolveVoice(engine string) string {
-	voice, ok := voiceModels[engine]
-	if !ok {
-		return voiceModels["fast"]
-	}
-	return voice
+// --- Piper backend ---
+
+type piperSynthesizer struct {
+	url    string
+	voice  string
+	client *http.Client
 }
 
-type ttsRequest struct {
-	Text  string `json:"text"`
-	Voice string `json:"voice"`
+func NewPiperSynthesizer(url, voice string, client *http.Client) TTSSynthesizer {
+	return &piperSynthesizer{url: url, voice: voice, client: client}
+}
+
+func (p *piperSynthesizer) SynthesizeAudio(ctx context.Context, text string) ([]byte, error) {
+	body, err := json.Marshal(struct {
+		Text  string `json:"text"`
+		Voice string `json:"voice"`
+	}{Text: text, Voice: p.voice})
+	if err != nil {
+		return nil, fmt.Errorf("marshal piper request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", p.url+"/synthesize", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create piper request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	return doTTSRequest(p.client, req)
+}
+
+// --- OpenAI-compatible backend (Kokoro, Orpheus) ---
+
+type openaiSynthesizer struct {
+	url    string
+	model  string
+	voice  string
+	client *http.Client
+}
+
+func NewOpenAISynthesizer(url, model, voice string, client *http.Client) TTSSynthesizer {
+	return &openaiSynthesizer{url: url, model: model, voice: voice, client: client}
+}
+
+func (o *openaiSynthesizer) SynthesizeAudio(ctx context.Context, text string) ([]byte, error) {
+	body, err := json.Marshal(struct {
+		Input          string `json:"input"`
+		Model          string `json:"model"`
+		Voice          string `json:"voice"`
+		ResponseFormat string `json:"response_format"`
+	}{Input: text, Model: o.model, Voice: o.voice, ResponseFormat: "wav"})
+	if err != nil {
+		return nil, fmt.Errorf("marshal openai tts request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", o.url+"/v1/audio/speech", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create openai tts request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	return doTTSRequest(o.client, req)
+}
+
+// HasEngine reports whether the router has a backend for the given engine name.
+func (r *TTSRouter) HasEngine(engine string) bool {
+	_, ok := r.backends[engine]
+	return ok
+}
+
+// Engines returns the names of all registered backends.
+func (r *TTSRouter) Engines() []string {
+	names := make([]string, 0, len(r.backends))
+	for k := range r.backends {
+		names = append(names, k)
+	}
+	return names
+}
+
+// --- ElevenLabs backend ---
+
+type elevenlabsSynthesizer struct {
+	apiKey  string
+	voiceID string
+	modelID string
+	client  *http.Client
+}
+
+func NewElevenLabsSynthesizer(apiKey, voiceID, modelID string, client *http.Client) TTSSynthesizer {
+	return &elevenlabsSynthesizer{apiKey: apiKey, voiceID: voiceID, modelID: modelID, client: client}
+}
+
+func (e *elevenlabsSynthesizer) SynthesizeAudio(ctx context.Context, text string) ([]byte, error) {
+	body, err := json.Marshal(struct {
+		Text    string `json:"text"`
+		ModelID string `json:"model_id"`
+	}{Text: text, ModelID: e.modelID})
+	if err != nil {
+		return nil, fmt.Errorf("marshal elevenlabs request: %w", err)
+	}
+
+	url := fmt.Sprintf("https://api.elevenlabs.io/v1/text-to-speech/%s", e.voiceID)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create elevenlabs request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("xi-api-key", e.apiKey)
+	req.Header.Set("Accept", "audio/mpeg")
+
+	return doTTSRequest(e.client, req)
+}
+
+// --- MeloTTS backend ---
+
+type meloSynthesizer struct {
+	url    string
+	client *http.Client
+}
+
+func NewMeloSynthesizer(url string, client *http.Client) TTSSynthesizer {
+	return &meloSynthesizer{url: url, client: client}
+}
+
+func (m *meloSynthesizer) SynthesizeAudio(ctx context.Context, text string) ([]byte, error) {
+	body, err := json.Marshal(struct {
+		Text      string  `json:"text"`
+		Speed     float64 `json:"speed"`
+		Language  string  `json:"language"`
+		SpeakerID string  `json:"speaker_id"`
+	}{Text: text, Speed: 1.0, Language: "EN", SpeakerID: "EN-Default"})
+	if err != nil {
+		return nil, fmt.Errorf("marshal melo request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", m.url+"/convert/tts", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create melo request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	return doTTSRequest(m.client, req)
+}
+
+// --- shared HTTP helper ---
+
+func doTTSRequest(client *http.Client, req *http.Request) ([]byte, error) {
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("tts request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("tts status %d", resp.StatusCode)
+	}
+
+	return io.ReadAll(resp.Body)
 }

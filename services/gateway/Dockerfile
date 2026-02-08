@@ -1,5 +1,6 @@
 FROM golang:1.23-alpine
 
+RUN apk add --no-cache docker-cli docker-cli-compose
 RUN go install github.com/air-verse/air@v1.61.6
 
 WORKDIR /app
