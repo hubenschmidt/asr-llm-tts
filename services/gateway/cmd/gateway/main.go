@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -108,6 +109,99 @@ func main() {
 		CallHistory:   callHistory,
 	})
 
+	// GPU broadcast hub — SSE clients subscribe, service events trigger push
+	var gpuMu sync.Mutex
+	gpuSubs := map[chan []byte]struct{}{}
+
+	gpuSubscribe := func() chan []byte {
+		ch := make(chan []byte, 1)
+		gpuMu.Lock()
+		gpuSubs[ch] = struct{}{}
+		gpuMu.Unlock()
+		return ch
+	}
+	gpuUnsubscribe := func(ch chan []byte) {
+		gpuMu.Lock()
+		delete(gpuSubs, ch)
+		gpuMu.Unlock()
+	}
+
+	enrichGPU := func(raw []byte) []byte {
+		if raw == nil {
+			return nil
+		}
+		type gpuProc struct {
+			PID    int    `json:"pid"`
+			Name   string `json:"name"`
+			VRAMMB int    `json:"vram_mb"`
+		}
+		var gpu struct {
+			VRAMTotalMB int       `json:"vram_total_mb"`
+			VRAMUsedMB  int       `json:"vram_used_mb"`
+			Processes   []gpuProc `json:"processes"`
+		}
+		if json.Unmarshal(raw, &gpu) != nil {
+			return raw
+		}
+
+		// Filter out 0 MB processes (e.g. ollama parent)
+		filtered := make([]gpuProc, 0, len(gpu.Processes))
+		for _, p := range gpu.Processes {
+			if p.VRAMMB > 0 {
+				filtered = append(filtered, p)
+			}
+		}
+		gpu.Processes = filtered
+
+		// Replace ollama binary names with loaded model names
+		loaded, _ := models.ListLoadedLLMs(context.Background(), cfg.ollamaURL)
+		modelIdx := 0
+		for i := range gpu.Processes {
+			if !strings.Contains(gpu.Processes[i].Name, "ollama") {
+				continue
+			}
+			if modelIdx < len(loaded) {
+				gpu.Processes[i].Name = loaded[modelIdx].Name
+				modelIdx++
+			}
+		}
+
+		enriched, err := json.Marshal(gpu)
+		if err != nil {
+			return raw
+		}
+		return enriched
+	}
+
+	fetchGPU := func() []byte {
+		if cfg.whisperControlURL == "" {
+			return nil
+		}
+		resp, err := http.Get(cfg.whisperControlURL + "/gpu")
+		if err != nil {
+			slog.Error("gpu fetch failed", "error", err)
+			return nil
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return enrichGPU(body)
+	}
+
+	broadcastGPU := func(data []byte) {
+		if data == nil {
+			return
+		}
+		slog.Info("gpu broadcast", "data", string(data))
+		gpuMu.Lock()
+		for ch := range gpuSubs {
+			select {
+			case ch <- data:
+			default:
+			}
+		}
+		gpuMu.Unlock()
+	}
+
 	mux := http.NewServeMux()
 	mux.Handle("/ws/call", handler)
 	mux.Handle("/metrics", promhttp.Handler())
@@ -155,6 +249,7 @@ func main() {
 			return
 		}
 		slog.Info("model preloaded", "model", req.Model)
+		broadcastGPU(fetchGPU())
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
@@ -189,6 +284,7 @@ func main() {
 			}
 			slog.Info("model unloaded", "model", req.Model, "still_loaded", names)
 		}
+		broadcastGPU(fetchGPU())
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
@@ -231,51 +327,37 @@ func main() {
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "engine": engine})
 	})
 
-	// GPU broadcast hub — SSE clients subscribe, service events trigger push
-	var gpuMu sync.Mutex
-	gpuSubs := map[chan []byte]struct{}{}
+	mux.HandleFunc("POST /api/gpu/unload-all", func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("unload-all requested")
 
-	gpuSubscribe := func() chan []byte {
-		ch := make(chan []byte, 1)
-		gpuMu.Lock()
-		gpuSubs[ch] = struct{}{}
-		gpuMu.Unlock()
-		return ch
-	}
-	gpuUnsubscribe := func(ch chan []byte) {
-		gpuMu.Lock()
-		delete(gpuSubs, ch)
-		gpuMu.Unlock()
-	}
+		// Unload all Ollama models from VRAM
+		if err := models.UnloadAllLLMs(r.Context(), cfg.ollamaURL); err != nil {
+			slog.Warn("unload-all ollama", "error", err)
+		}
 
-	fetchGPU := func() []byte {
-		if cfg.whisperControlURL == "" {
-			return nil
-		}
-		resp, err := http.Get(cfg.whisperControlURL + "/gpu")
-		if err != nil {
-			slog.Error("gpu fetch failed", "error", err)
-			return nil
-		}
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		return body
-	}
-
-	broadcastGPU := func(data []byte) {
-		if data == nil {
-			return
-		}
-		slog.Info("gpu broadcast", "data", string(data))
-		gpuMu.Lock()
-		for ch := range gpuSubs {
-			select {
-			case ch <- data:
-			default:
+		// Stop all running GPU services (whisper-server, etc.)
+		svcs, _ := svcMgr.StatusAll(r.Context())
+		for _, svc := range svcs {
+			if svc.Status == orchestrator.StatusStopped {
+				continue
+			}
+			slog.Info("unload-all stopping service", "name", svc.Name)
+			if _, err := svcMgr.Stop(r.Context(), svc.Name); err != nil {
+				slog.Warn("unload-all stop", "name", svc.Name, "error", err)
 			}
 		}
-		gpuMu.Unlock()
-	}
+
+		// Fetch + broadcast fresh GPU state
+		data := fetchGPU()
+		broadcastGPU(data)
+
+		w.Header().Set("Content-Type", "application/json")
+		if data != nil {
+			w.Write(data)
+			return
+		}
+		w.Write([]byte(`{"vram_total_mb":0,"vram_used_mb":0,"processes":[]}`))
+	})
 
 	mux.HandleFunc("GET /api/gpu", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

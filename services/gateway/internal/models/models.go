@@ -133,9 +133,10 @@ func ListLoadedLLMs(ctx context.Context, ollamaURL string) ([]LoadedLLM, error) 
 	return result.Models, nil
 }
 
-// UnloadLLM triggers Ollama to unload a model from GPU VRAM.
+// UnloadLLM triggers Ollama to unload a model from GPU VRAM and waits
+// until the model is confirmed unloaded (or timeout).
 func UnloadLLM(ctx context.Context, ollamaURL, model string) error {
-	body, err := json.Marshal(map[string]any{"model": model, "keep_alive": 0})
+	body, err := json.Marshal(map[string]any{"model": model, "keep_alive": 0, "stream": false})
 	if err != nil {
 		return err
 	}
@@ -156,7 +157,26 @@ func UnloadLLM(ctx context.Context, ollamaURL, model string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("ollama unload status %d", resp.StatusCode)
 	}
-	return nil
+
+	// Poll /api/ps until model is confirmed unloaded
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		loaded, err := ListLoadedLLMs(ctx, ollamaURL)
+		if err != nil {
+			return nil // best-effort
+		}
+		found := false
+		for _, m := range loaded {
+			if m.Name == model {
+				found = true
+			}
+		}
+		if !found {
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("model %s still loaded after timeout", model)
 }
 
 // UnloadAllLLMs unloads every model currently loaded in Ollama VRAM.

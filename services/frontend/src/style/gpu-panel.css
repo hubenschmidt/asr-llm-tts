@@ -1,0 +1,91 @@
+.gpu-container {
+  background: #1a1a2e;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  color: #eee;
+}
+
+.gpu-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.gpu-heading {
+  font-size: 12px;
+  color: #aaa;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin: 0;
+}
+
+.gpu-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.gpu-bar-track {
+  height: 8px;
+  background: #2a2a3e;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.gpu-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 300ms ease;
+}
+
+.gpu-usage-text {
+  font-size: 12px;
+  color: #888;
+  text-align: right;
+  margin-top: 4px;
+  font-family: monospace;
+}
+
+.gpu-process-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  padding: 2px 0;
+  margin-top: 2px;
+}
+
+.gpu-process-name { color: #ccc; }
+.gpu-process-vram { color: #888; font-family: monospace; }
+
+.gpu-no-data {
+  color: #555;
+  font-size: 12px;
+}
+
+.gpu-no-processes {
+  color: #555;
+  font-size: 12px;
+  margin: 4px 0 0;
+}
+
+.gpu-unload-btn {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid #555;
+  background: #333;
+  color: #ccc;
+  cursor: pointer;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.gpu-unload-btn:hover {
+  background: #e74c3c;
+  border-color: #e74c3c;
+  color: #fff;
+}
