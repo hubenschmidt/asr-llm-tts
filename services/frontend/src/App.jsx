@@ -1,6 +1,6 @@
 import { CallPanel } from "./components/CallPanel";
 
-export default function App() {
+const App = () => {
   return (
     <div
       style={{
@@ -13,4 +13,6 @@ export default function App() {
       <CallPanel />
     </div>
   );
-}
+};
+
+export default App;

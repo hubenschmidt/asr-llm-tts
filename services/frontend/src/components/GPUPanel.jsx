@@ -8,7 +8,7 @@ const [sseStatus, setSseStatus] = createSignal("connecting");
 // Connect SSE directly to gateway (Vite proxy buffers SSE)
 const gwOrigin = `http://${window.location.hostname}:8000`;
 
-export function GPUPanel(props) {
+export const GPUPanel = (props) => {
   const es = new EventSource(`${gwOrigin}/api/gpu/stream`);
   es.onopen = () => setSseStatus("open");
   es.onmessage = (e) => {
@@ -76,4 +76,4 @@ export function GPUPanel(props) {
       </Show>
     </div>
   );
-}
+};

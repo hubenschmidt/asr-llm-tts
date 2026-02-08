@@ -54,21 +54,19 @@ services:
 
   # --- commented out services ---
 
-  # piper:
-  #   build:
-  #     context: ./services/piper
-  #     dockerfile: Dockerfile
-  #   ports:
-  #     - "5100:5100"
-  #   healthcheck:
-  #     test: ["CMD", "curl", "-f", "http://localhost:5100/health"]
-  #     interval: 10s
-  #     timeout: 5s
-  #     retries: 5
-  #     start_period: 30s
-  #   profiles:
-  #     - ml
-  #   restart: unless-stopped
+  piper:
+    build:
+      context: ./services/piper
+      dockerfile: Dockerfile
+    ports:
+      - "5100:5100"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5100/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
 
   # prometheus:
   #   image: prom/prometheus:v2.51.0

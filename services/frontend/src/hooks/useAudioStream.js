@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js";
 
-export function useAudioStream(opts) {
+export const useAudioStream = (opts) => {
   const [isStreaming, setIsStreaming] = createSignal(false);
   let ws = null;
   let mediaStream = null;
@@ -147,9 +147,9 @@ export function useAudioStream(opts) {
   };
 
   return { isStreaming, startMic, startFile, stop };
-}
+};
 
-function createWorkletURL() {
+const createWorkletURL = () => {
   const code = `
 class PCMSender extends AudioWorkletProcessor {
   process(inputs) {
@@ -164,4 +164,4 @@ registerProcessor('pcm-sender', PCMSender);
 `;
   const blob = new Blob([code], { type: "application/javascript" });
   return URL.createObjectURL(blob);
-}
+};

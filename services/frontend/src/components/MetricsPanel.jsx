@@ -1,6 +1,6 @@
 import { Show } from "solid-js";
 
-export function MetricsPanel(props) {
+export const MetricsPanel = (props) => {
   const avg = () => computeAverages(props.history);
 
   return (
@@ -34,9 +34,9 @@ export function MetricsPanel(props) {
       </Show>
     </div>
   );
-}
+};
 
-function MetricRow(props) {
+const MetricRow = (props) => {
   const color = () => props.ms > 1000 ? "#e74c3c" : props.ms > 500 ? "#f39c12" : "#2ecc71";
   return (
     <div
@@ -51,9 +51,9 @@ function MetricRow(props) {
       <span style={{ color: color(), "font-family": "monospace" }}>{props.ms.toFixed(0)}ms</span>
     </div>
   );
-}
+};
 
-function computeAverages(history) {
+const computeAverages = (history) => {
   if (history.length === 0) {
     return { asr_ms: 0, llm_ms: 0, tts_ms: 0, total_ms: 0 };
   }
@@ -64,7 +64,7 @@ function computeAverages(history) {
     tts_ms: history.reduce((s, m) => s + m.tts_ms, 0) / n,
     total_ms: history.reduce((s, m) => s + m.total_ms, 0) / n,
   };
-}
+};
 
 const containerStyle = {
   background: "#1a1a2e",
