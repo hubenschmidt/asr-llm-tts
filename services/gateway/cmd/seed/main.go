@@ -60,16 +60,20 @@ func main() {
 
 	var total int
 	for _, f := range files {
-		n, seedErr := seedFile(ctx, f, *chunkSize, embedder, qdrant, *collection)
-		if seedErr != nil {
-			slog.Error("seed file", "file", f, "error", seedErr)
-			continue
-		}
-		total += n
-		slog.Info("seeded", "file", f, "chunks", n)
+		total += seedOneFile(ctx, f, *chunkSize, embedder, qdrant, *collection)
 	}
 
 	slog.Info("done", "total_chunks", total, "files", len(files))
+}
+
+func seedOneFile(ctx context.Context, path string, chunkSize int, embedder *pipeline.EmbeddingClient, qdrant *pipeline.QdrantClient, collection string) int {
+	n, err := seedFile(ctx, path, chunkSize, embedder, qdrant, collection)
+	if err != nil {
+		slog.Error("seed file", "file", path, "error", err)
+		return 0
+	}
+	slog.Info("seeded", "file", path, "chunks", n)
+	return n
 }
 
 func seedFile(ctx context.Context, path string, chunkSize int, embedder *pipeline.EmbeddingClient, qdrant *pipeline.QdrantClient, collection string) (int, error) {
@@ -104,15 +108,11 @@ func seedFile(ctx context.Context, path string, chunkSize int, embedder *pipelin
 }
 
 func chunkText(text string, maxChars int) []string {
-	paragraphs := strings.Split(text, "\n\n")
+	paragraphs := filterNonEmpty(strings.Split(text, "\n\n"))
 	var chunks []string
 	var current strings.Builder
 
 	for _, p := range paragraphs {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
 		if current.Len()+len(p) > maxChars && current.Len() > 0 {
 			chunks = append(chunks, current.String())
 			current.Reset()
@@ -128,6 +128,17 @@ func chunkText(text string, maxChars int) []string {
 	}
 
 	return chunks
+}
+
+func filterNonEmpty(ss []string) []string {
+	out := make([]string, 0, len(ss))
+	for _, s := range ss {
+		trimmed := strings.TrimSpace(s)
+		if trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 func envOr(key, fallback string) string {

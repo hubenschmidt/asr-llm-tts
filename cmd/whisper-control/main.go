@@ -330,26 +330,6 @@ func handleDownloadModel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	os.MkdirAll(modelsDir, 0755)
-	url := modelBaseURL + req.Name
-	slog.Info("downloading whisper model", "name", req.Name, "url", url)
-
-	resp, err := http.Get(url)
-	if err != nil {
-		http.Error(w, "download request failed: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		http.Error(w, "download returned "+resp.Status, http.StatusBadGateway)
-		return
-	}
-
-	out, err := os.Create(dest + ".tmp")
-	if err != nil {
-		http.Error(w, "create file: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
 
 	flushFn := noopFlush
 	flusher, ok := w.(http.Flusher)
@@ -359,19 +339,45 @@ func handleDownloadModel(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.WriteHeader(http.StatusOK)
 
+	err := downloadModel(req.Name, dest, w, flushFn)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]string{"status": "done"})
+	flushFn()
+}
+
+func downloadModel(name, dest string, w http.ResponseWriter, flushFn func()) error {
+	url := modelBaseURL + name
+	slog.Info("downloading whisper model", "name", name, "url", url)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return fmt.Errorf("download request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download returned %s", resp.Status)
+	}
+
+	out, err := os.Create(dest + ".tmp")
+	if err != nil {
+		return fmt.Errorf("create file: %w", err)
+	}
+
 	pw := &progressWriter{out: out, w: w, flushFn: flushFn, total: resp.ContentLength, lastReport: time.Now()}
 	_, copyErr := io.Copy(pw, resp.Body)
 	out.Close()
 
 	if copyErr != nil {
 		os.Remove(dest + ".tmp")
-		json.NewEncoder(w).Encode(map[string]string{"error": copyErr.Error()})
-		return
+		return copyErr
 	}
 	os.Rename(dest+".tmp", dest)
-	slog.Info("model downloaded", "name", req.Name, "bytes", pw.downloaded)
-	json.NewEncoder(w).Encode(map[string]string{"status": "done"})
-	flushFn()
+	slog.Info("model downloaded", "name", name, "bytes", pw.downloaded)
+	return nil
 }
 
 func modelStatus(name string) (bool, int) {

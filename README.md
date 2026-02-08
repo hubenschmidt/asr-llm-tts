@@ -1,6 +1,6 @@
 # ASR-LLM-TTS Pipeline
 
-Real-time voice pipeline for call center automation. Speak into the mic, get a transcription via ASR, a response from an LLM (Ollama), and hear it spoken back via TTS — all with sentence-level pipelining so you hear the first sentence before the LLM finishes generating.
+Real-time voice pipeline for call center automation, built for AMD GPUs via ROCm. Speak into the mic, get a transcription via ASR, a response from an LLM (Ollama), and hear it spoken back via TTS — all with sentence-level pipelining so you hear the first sentence before the LLM finishes generating.
 
 ![Conversation Demo](spec/screenshots/conversation-demo.png)
 
@@ -35,6 +35,16 @@ Browser captures mic audio over WebSocket. The Go gateway decodes, resamples to 
 Each WebSocket connection gets its own goroutine with context-based cancellation. LLM and TTS stages overlap via channels for sentence-level pipelining. A semaphore caps concurrent calls (default 100), returning 503 when full.
 
 GPU-bound services (whisper-server, Ollama) run on the host for direct ROCm access. Docker services (Piper, Kokoro, MeloTTS, faster-whisper) run in containers. The `whisper-control` host process manages whisper-server lifecycle and exposes GPU monitoring.
+
+## Codecs
+
+| Codec | Rate | Use case |
+|-------|------|----------|
+| PCM (16-bit LE) | Caller-specified | Browser frontend via WebSocket |
+| G.711 μ-law | 8000 Hz | Telephony ingest (SIP/RTP, Telnyx, Twilio) |
+| G.711 A-law | 8000 Hz | Telephony ingest (SIP/RTP, international) |
+
+The browser path sends raw PCM. G.711 decoders are available for future telephony integration where SIP trunks or CPaaS APIs deliver μ-law/A-law audio.
 
 ## Setup
 

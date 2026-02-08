@@ -1,6 +1,7 @@
 package models
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -61,14 +63,19 @@ func scanDownloaded(dir string) map[string]bool {
 		return m
 	}
 	for _, e := range entries {
-		name := e.Name()
-		if !strings.HasPrefix(name, "ggml-") || !strings.HasSuffix(name, ".bin") {
-			continue
+		name, ok := extractModelName(e.Name())
+		if ok {
+			m[name] = true
 		}
-		model := strings.TrimSuffix(strings.TrimPrefix(name, "ggml-"), ".bin")
-		m[model] = true
 	}
 	return m
+}
+
+func extractModelName(filename string) (string, bool) {
+	if !strings.HasPrefix(filename, "ggml-") || !strings.HasSuffix(filename, ".bin") {
+		return "", false
+	}
+	return strings.TrimSuffix(strings.TrimPrefix(filename, "ggml-"), ".bin"), true
 }
 
 // ListLLMModels queries Ollama /api/tags and returns installed model names.
@@ -140,7 +147,7 @@ func UnloadLLM(ctx context.Context, ollamaURL, model string) error {
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", ollamaURL+"/api/generate", strings.NewReader(string(body)))
+	req, err := http.NewRequestWithContext(ctx, "POST", ollamaURL+"/api/generate", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -158,25 +165,26 @@ func UnloadLLM(ctx context.Context, ollamaURL, model string) error {
 		return fmt.Errorf("ollama unload status %d", resp.StatusCode)
 	}
 
-	// Poll /api/ps until model is confirmed unloaded
+	return waitForUnload(ctx, ollamaURL, model)
+}
+
+func waitForUnload(ctx context.Context, ollamaURL, model string) error {
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		loaded, err := ListLoadedLLMs(ctx, ollamaURL)
 		if err != nil {
 			return nil // best-effort
 		}
-		found := false
-		for _, m := range loaded {
-			if m.Name == model {
-				found = true
-			}
-		}
-		if !found {
+		if !isModelLoaded(loaded, model) {
 			return nil
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
 	return fmt.Errorf("model %s still loaded after timeout", model)
+}
+
+func isModelLoaded(loaded []LoadedLLM, model string) bool {
+	return slices.ContainsFunc(loaded, func(m LoadedLLM) bool { return m.Name == model })
 }
 
 // UnloadAllLLMs unloads every model currently loaded in Ollama VRAM.
@@ -199,7 +207,7 @@ func PreloadLLM(ctx context.Context, ollamaURL, model string) error {
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", ollamaURL+"/api/generate", strings.NewReader(string(body)))
+	req, err := http.NewRequestWithContext(ctx, "POST", ollamaURL+"/api/generate", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -300,11 +308,12 @@ func ParseActiveModel(modelPath string) string {
 	return name
 }
 
-func isValidASRModel(name string) bool {
+var validASRModels = func() map[string]bool {
+	m := make(map[string]bool, len(asrCatalog))
 	for _, c := range asrCatalog {
-		if c.Name == name {
-			return true
-		}
+		m[c.Name] = true
 	}
-	return false
-}
+	return m
+}()
+
+func isValidASRModel(name string) bool { return validASRModels[name] }

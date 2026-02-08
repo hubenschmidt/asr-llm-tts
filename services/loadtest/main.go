@@ -115,24 +115,30 @@ func runCall(gateway, codec, ttsEngine string, files []string) callResult {
 		if err != nil {
 			return callResult{err: fmt.Sprintf("read: %v", err)}
 		}
-		if msgType != websocket.TextMessage {
-			continue
-		}
-		var m pipelineMetrics
-		if err = json.Unmarshal(data, &m); err != nil {
-			continue
-		}
-		if m.Type != "metrics" {
-			continue
-		}
-		return callResult{
-			success: true,
-			asrMs:   m.ASRMs,
-			llmMs:   m.LLMMs,
-			ttsMs:   m.TTSMs,
-			totalMs: m.TotalMs,
+		if r, ok := parseMetrics(msgType, data); ok {
+			return r
 		}
 	}
+}
+
+func parseMetrics(msgType int, data []byte) (callResult, bool) {
+	if msgType != websocket.TextMessage {
+		return callResult{}, false
+	}
+	var m pipelineMetrics
+	if json.Unmarshal(data, &m) != nil {
+		return callResult{}, false
+	}
+	if m.Type != "metrics" {
+		return callResult{}, false
+	}
+	return callResult{
+		success: true,
+		asrMs:   m.ASRMs,
+		llmMs:   m.LLMMs,
+		ttsMs:   m.TTSMs,
+		totalMs: m.TotalMs,
+	}, true
 }
 
 func getAudioData(files []string) []byte {
@@ -177,23 +183,22 @@ func findAudioFiles(dir string) ([]string, error) {
 }
 
 func printSummary(results []callResult) {
-	var succeeded, failed int
-	var asrAll, llmAll, ttsAll, e2eAll []float64
+	successful := filterSuccessful(results)
+	failed := len(results) - len(successful)
 
-	for _, r := range results {
-		if !r.success {
-			failed++
-			continue
-		}
-		succeeded++
-		asrAll = append(asrAll, r.asrMs)
-		llmAll = append(llmAll, r.llmMs)
-		ttsAll = append(ttsAll, r.ttsMs)
-		e2eAll = append(e2eAll, r.totalMs)
+	asrAll := make([]float64, len(successful))
+	llmAll := make([]float64, len(successful))
+	ttsAll := make([]float64, len(successful))
+	e2eAll := make([]float64, len(successful))
+	for i, r := range successful {
+		asrAll[i] = r.asrMs
+		llmAll[i] = r.llmMs
+		ttsAll[i] = r.ttsMs
+		e2eAll[i] = r.totalMs
 	}
 
 	fmt.Printf("\n=== Load Test Results ===\n")
-	fmt.Printf("Calls completed: %d\n", succeeded)
+	fmt.Printf("Calls completed: %d\n", len(successful))
 	fmt.Printf("Calls failed:    %d\n", failed)
 
 	if len(asrAll) == 0 {
@@ -206,6 +211,16 @@ func printSummary(results []callResult) {
 	fmt.Printf("%-6s %8.0fms %8.0fms %8.0fms\n", "LLM", percentile(llmAll, 50), percentile(llmAll, 95), percentile(llmAll, 99))
 	fmt.Printf("%-6s %8.0fms %8.0fms %8.0fms\n", "TTS", percentile(ttsAll, 50), percentile(ttsAll, 95), percentile(ttsAll, 99))
 	fmt.Printf("%-6s %8.0fms %8.0fms %8.0fms\n", "E2E", percentile(e2eAll, 50), percentile(e2eAll, 95), percentile(e2eAll, 99))
+}
+
+func filterSuccessful(results []callResult) []callResult {
+	out := make([]callResult, 0, len(results))
+	for _, r := range results {
+		if r.success {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 func percentile(data []float64, pct float64) float64 {
