@@ -242,8 +242,12 @@ export function CallPanel() {
                 disabled={isStreaming() || loadingSTT() || !sttEngine()}
                 onClick={() => {
                   const svc = ENGINE_TO_SERVICE[sttEngine()];
-                  setSttEngine("");
-                  if (svc) stopService(svc).catch(() => {});
+                  if (!svc) { setSttEngine(""); return; }
+                  setLoadingSTT(true);
+                  stopService(svc)
+                    .then(() => setSttEngine(""))
+                    .catch((err) => setError(`STT stop failed: ${err instanceof Error ? err.message : err}`))
+                    .finally(() => setLoadingSTT(false));
                 }}
               >Unload</button>
             </div>
@@ -278,9 +282,11 @@ export function CallPanel() {
                 class="unload-btn"
                 disabled={isStreaming() || loadingLLM() || !llmModel()}
                 onClick={() => {
+                  setLoadingLLM(true);
                   unloadModel("llm", llmModel())
                     .then(() => setLlmModel(""))
-                    .catch((err) => setError(`Unload failed: ${err instanceof Error ? err.message : err}`));
+                    .catch((err) => setError(`Unload failed: ${err instanceof Error ? err.message : err}`))
+                    .finally(() => setLoadingLLM(false));
                 }}
               >Unload</button>
             </div>

@@ -138,6 +138,16 @@ func getGPUInfo() gpuInfo {
 	}
 	info.VRAMTotalMB, info.VRAMUsedMB = parseVRAM(out)
 	info.Processes = scanGPUProcesses()
+
+	// Add "system" entry for unaccounted VRAM (driver, display server, framebuffers)
+	accounted := 0
+	for _, p := range info.Processes {
+		accounted += p.VRAMMB
+	}
+	if gap := info.VRAMUsedMB - accounted; gap > 0 {
+		info.Processes = append(info.Processes, gpuProcess{PID: 0, Name: "system", VRAMMB: gap})
+	}
+
 	slog.Info("gpu response", "vram_total_mb", info.VRAMTotalMB, "vram_used_mb", info.VRAMUsedMB, "processes", len(info.Processes))
 	return info
 }
