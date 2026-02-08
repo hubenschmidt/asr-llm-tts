@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -229,25 +231,94 @@ func main() {
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "engine": engine})
 	})
 
-	mux.HandleFunc("GET /api/gpu", func(w http.ResponseWriter, r *http.Request) {
+	// GPU broadcast hub — SSE clients subscribe, service events trigger push
+	var gpuMu sync.Mutex
+	gpuSubs := map[chan []byte]struct{}{}
+
+	gpuSubscribe := func() chan []byte {
+		ch := make(chan []byte, 1)
+		gpuMu.Lock()
+		gpuSubs[ch] = struct{}{}
+		gpuMu.Unlock()
+		return ch
+	}
+	gpuUnsubscribe := func(ch chan []byte) {
+		gpuMu.Lock()
+		delete(gpuSubs, ch)
+		gpuMu.Unlock()
+	}
+
+	fetchGPU := func() []byte {
 		if cfg.whisperControlURL == "" {
-			http.Error(w, "no control server configured", http.StatusServiceUnavailable)
-			return
+			return nil
 		}
-		req, err := http.NewRequestWithContext(r.Context(), "GET", cfg.whisperControlURL+"/gpu", nil)
+		resp, err := http.Get(cfg.whisperControlURL + "/gpu")
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			slog.Error("gpu fetch failed", "error", err)
+			return nil
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return body
+	}
+
+	broadcastGPU := func(data []byte) {
+		if data == nil {
 			return
 		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			slog.Error("gpu info fetch failed", "error", err)
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
+		slog.Info("gpu broadcast", "data", string(data))
+		gpuMu.Lock()
+		for ch := range gpuSubs {
+			select {
+			case ch <- data:
+			default:
+			}
 		}
-		defer resp.Body.Close()
+		gpuMu.Unlock()
+	}
+
+	mux.HandleFunc("GET /api/gpu", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		io.Copy(w, resp.Body)
+		data := fetchGPU()
+		if data == nil {
+			w.Write([]byte(`{"vram_total_mb":0,"vram_used_mb":0,"processes":[]}`))
+			return
+		}
+		w.Write(data)
+	})
+
+	mux.HandleFunc("GET /api/gpu/stream", func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+
+		// Send current state on connect
+		data := fetchGPU()
+		if data != nil {
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		}
+
+		ch := gpuSubscribe()
+		defer gpuUnsubscribe(ch)
+		slog.Info("gpu/stream client connected", "remote", r.RemoteAddr)
+
+		for {
+			select {
+			case <-r.Context().Done():
+				slog.Info("gpu/stream client disconnected", "remote", r.RemoteAddr)
+				return
+			case msg := <-ch:
+				fmt.Fprintf(w, "data: %s\n\n", msg)
+				flusher.Flush()
+			}
+		}
 	})
 
 	mux.HandleFunc("GET /api/services", func(w http.ResponseWriter, r *http.Request) {
@@ -262,12 +333,14 @@ func main() {
 	mux.HandleFunc("POST /api/services/{name}/start", func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 		slog.Info("service start requested", "name", name)
-		if err := svcMgr.Start(r.Context(), name); err != nil {
+		gpuData, err := svcMgr.Start(r.Context(), name)
+		if err != nil {
 			slog.Error("service start failed", "name", name, "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		slog.Info("service started", "name", name)
+		broadcastGPU(gpuData)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		json.NewEncoder(w).Encode(map[string]string{"status": "starting"})
@@ -275,12 +348,14 @@ func main() {
 	mux.HandleFunc("POST /api/services/{name}/stop", func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 		slog.Info("service stop requested", "name", name)
-		if err := svcMgr.Stop(r.Context(), name); err != nil {
+		gpuData, err := svcMgr.Stop(r.Context(), name)
+		if err != nil {
 			slog.Error("service stop failed", "name", name, "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		slog.Info("service stopped", "name", name)
+		broadcastGPU(gpuData)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "stopped"})
 	})
@@ -320,7 +395,7 @@ func main() {
 				continue
 			}
 			slog.Info("stopping service", "name", svc.Name)
-			if err := svcMgr.Stop(ctx, svc.Name); err != nil {
+			if _, err := svcMgr.Stop(ctx, svc.Name); err != nil {
 				slog.Warn("stop service", "name", svc.Name, "error", err)
 			}
 		}

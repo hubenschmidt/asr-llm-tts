@@ -1,6 +1,9 @@
 package orchestrator
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 // ServiceStatus represents the lifecycle state of a managed service.
 type ServiceStatus string
@@ -23,8 +26,8 @@ type ServiceInfo struct {
 // ServiceManager controls the lifecycle of ML services.
 // Implementations can target Docker Compose, Kubernetes, ECS, etc.
 type ServiceManager interface {
-	Start(ctx context.Context, name string) error
-	Stop(ctx context.Context, name string) error
+	Start(ctx context.Context, name string) (json.RawMessage, error)
+	Stop(ctx context.Context, name string) (json.RawMessage, error)
 	Status(ctx context.Context, name string) (*ServiceInfo, error)
 	StatusAll(ctx context.Context) ([]ServiceInfo, error)
 }

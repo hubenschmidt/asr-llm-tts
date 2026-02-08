@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var (
@@ -40,7 +41,7 @@ func main() {
 
 func handleStart(w http.ResponseWriter, r *http.Request) {
 	if isRunning() {
-		writeJSON(w, map[string]string{"status": "already_running"})
+		writeJSON(w, currentGPU("already_running"))
 		return
 	}
 	cmd := fmt.Sprintf(
@@ -53,14 +54,54 @@ func handleStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	slog.Info("whisper-server started", "port", whisperPort)
-	writeJSON(w, map[string]string{"status": "started"})
+	slog.Info("waiting for whisper-server health", "port", whisperPort)
+	waitForHealth(fmt.Sprintf("http://localhost:%s", whisperPort), 30*time.Second)
+	slog.Info("whisper-server ready", "port", whisperPort)
+	writeJSON(w, currentGPU("started"))
 }
 
 func handleStop(w http.ResponseWriter, r *http.Request) {
 	exec.Command("pkill", "-f", whisperBin).Run()
+	waitForExit(5 * time.Second)
 	slog.Info("whisper-server stopped")
-	writeJSON(w, map[string]string{"status": "stopped"})
+	writeJSON(w, currentGPU("stopped"))
+}
+
+// waitForHealth polls a URL until it returns 200 or timeout expires.
+func waitForHealth(url string, timeout time.Duration) {
+	client := &http.Client{Timeout: 2 * time.Second}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(url)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	slog.Warn("health check timed out", "url", url)
+}
+
+// waitForExit polls until process is no longer running or timeout expires.
+func waitForExit(timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if !isRunning() {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// currentGPU returns status + GPU snapshot in one response.
+func currentGPU(status string) map[string]any {
+	gpu := getGPUInfo()
+	return map[string]any{
+		"status": status,
+		"gpu":    gpu,
+	}
 }
 
 func handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -84,15 +125,21 @@ type gpuProcess struct {
 }
 
 func handleGPU(w http.ResponseWriter, r *http.Request) {
-	info := gpuInfo{Processes: []gpuProcess{}}
-
-	out, err := exec.Command("rocm-smi", "--showmeminfo", "vram", "--json").Output()
-	if err == nil {
-		info.VRAMTotalMB, info.VRAMUsedMB = parseVRAM(out)
-	}
-
-	info.Processes = scanGPUProcesses()
+	info := getGPUInfo()
 	writeJSON(w, info)
+}
+
+func getGPUInfo() gpuInfo {
+	info := gpuInfo{Processes: []gpuProcess{}}
+	out, err := exec.Command("rocm-smi", "--showmeminfo", "vram", "--json").Output()
+	if err != nil {
+		slog.Error("rocm-smi failed", "error", err)
+		return info
+	}
+	info.VRAMTotalMB, info.VRAMUsedMB = parseVRAM(out)
+	info.Processes = scanGPUProcesses()
+	slog.Info("gpu response", "vram_total_mb", info.VRAMTotalMB, "vram_used_mb", info.VRAMUsedMB, "processes", len(info.Processes))
+	return info
 }
 
 func parseVRAM(raw []byte) (totalMB, usedMB int) {
@@ -115,9 +162,9 @@ func scanGPUProcesses() []gpuProcess {
 	kfdProc := "/sys/class/kfd/kfd/proc"
 	entries, err := os.ReadDir(kfdProc)
 	if err != nil {
-		return nil
+		return []gpuProcess{}
 	}
-	var procs []gpuProcess
+	procs := []gpuProcess{}
 	for _, entry := range entries {
 		pid, err := strconv.Atoi(entry.Name())
 		if err != nil {
@@ -150,8 +197,11 @@ func pidVRAM(dir string) int {
 		if err != nil {
 			continue
 		}
-		v, _ := strconv.Atoi(strings.TrimSpace(string(data)))
-		total += v
+		v, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
+		if err != nil || v < 0 {
+			continue
+		}
+		total += int(v)
 	}
 	return total
 }

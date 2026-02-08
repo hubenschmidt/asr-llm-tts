@@ -50,6 +50,11 @@ export function CallPanel() {
       .catch(() => {});
   };
 
+  const SERVICE_TO_STT: Record<string, string> = {
+    "whisper-server": "whisper-server",
+    "faster-whisper": "faster-whisper",
+  };
+
   const fetchServices = () => {
     fetch("/api/services")
       .then((r) => r.json())
@@ -57,6 +62,13 @@ export function CallPanel() {
         const map: Record<string, string> = {};
         for (const svc of data) map[svc.name] = svc.status;
         setServiceStatuses(map);
+        if (sttEngine()) return;
+        for (const svc of data) {
+          if (svc.category !== "stt") continue;
+          if (svc.status !== "healthy" && svc.status !== "running") continue;
+          const engine = SERVICE_TO_STT[svc.name];
+          if (engine) { setSttEngine(engine); return; }
+        }
       })
       .catch(() => {});
   };
@@ -68,15 +80,9 @@ export function CallPanel() {
 
   const startService = async (serviceName: string): Promise<void> => {
     setServiceStatuses((prev) => ({ ...prev, [serviceName]: "starting" }));
-    await fetch(`/api/services/${serviceName}/start`, { method: "POST" });
-    for (let i = 0; i < 60; i++) {
-      await new Promise((r) => setTimeout(r, 2000));
-      const resp = await fetch(`/api/services/${serviceName}/status`);
-      const info: ServiceInfo = await resp.json();
-      setServiceStatuses((prev) => ({ ...prev, [serviceName]: info.status }));
-      if (info.status === "healthy") return;
-    }
-    throw new Error(`Service ${serviceName} did not become healthy`);
+    const resp = await fetch(`/api/services/${serviceName}/start`, { method: "POST" });
+    if (!resp.ok) throw new Error(`Service ${serviceName} failed to start`);
+    setServiceStatuses((prev) => ({ ...prev, [serviceName]: "healthy" }));
   };
 
   const stopService = async (serviceName: string): Promise<void> => {
@@ -169,7 +175,7 @@ export function CallPanel() {
     })
       .then((r) => { if (!r.ok) throw new Error("preload failed"); })
       .catch((err) => setError(`Model preload failed: ${err instanceof Error ? err.message : err}`))
-      .finally(() => setLoadingLLM(false));
+      .finally(() => () => setLoadingLLM(false));
   };
 
   const handleTTSChange = (e: Event) => {
@@ -189,7 +195,7 @@ export function CallPanel() {
       }))
       .then((r) => { if (!r.ok) throw new Error("warmup failed"); })
       .catch((err) => setError(`TTS failed: ${err instanceof Error ? err.message : err}`))
-      .finally(() => setLoadingTTS(false));
+      .finally(() => () => setLoadingTTS(false));
   };
 
   const handleFileSelect = (e: Event) => {
@@ -281,6 +287,7 @@ export function CallPanel() {
                     .then((r) => {
                       if (!r.ok) throw new Error("unload failed");
                       setLlmModel("");
+                      ;
                     })
                     .catch((err) => setError(`Unload failed: ${err instanceof Error ? err.message : err}`));
                 }}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 )
@@ -17,51 +18,68 @@ type HTTPControlManager struct {
 // NewHTTPControlManager creates a manager backed by HTTP control endpoints.
 func NewHTTPControlManager(registry *Registry) *HTTPControlManager {
 	return &HTTPControlManager{
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+		httpClient: &http.Client{Timeout: 30 * time.Second},
 		registry:   registry,
 	}
 }
 
 // Start launches a service via its HTTP control server.
-func (h *HTTPControlManager) Start(ctx context.Context, name string) error {
+// Returns the raw GPU JSON from the control server response.
+func (h *HTTPControlManager) Start(ctx context.Context, name string) (json.RawMessage, error) {
 	meta, ok := h.registry.Lookup(name)
 	if !ok {
-		return fmt.Errorf("service %q not in registry", name)
+		return nil, fmt.Errorf("service %q not in registry", name)
 	}
 	if meta.ControlURL == "" {
-		return fmt.Errorf("service %q has no control URL", name)
+		return nil, fmt.Errorf("service %q has no control URL", name)
 	}
 	req, err := http.NewRequestWithContext(ctx, "POST", meta.ControlURL+"/start", nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("start %s: %w", name, err)
+		return nil, fmt.Errorf("start %s: %w", name, err)
 	}
-	resp.Body.Close()
-	return nil
+	defer resp.Body.Close()
+	return extractGPU(resp)
 }
 
 // Stop kills a service via its HTTP control server.
-func (h *HTTPControlManager) Stop(ctx context.Context, name string) error {
+// Returns the raw GPU JSON from the control server response.
+func (h *HTTPControlManager) Stop(ctx context.Context, name string) (json.RawMessage, error) {
 	meta, ok := h.registry.Lookup(name)
 	if !ok {
-		return fmt.Errorf("service %q not in registry", name)
+		return nil, fmt.Errorf("service %q not in registry", name)
 	}
 	if meta.ControlURL == "" {
-		return fmt.Errorf("service %q has no control URL", name)
+		return nil, fmt.Errorf("service %q has no control URL", name)
 	}
 	req, err := http.NewRequestWithContext(ctx, "POST", meta.ControlURL+"/stop", nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("stop %s: %w", name, err)
+		return nil, fmt.Errorf("stop %s: %w", name, err)
 	}
-	resp.Body.Close()
-	return nil
+	defer resp.Body.Close()
+	return extractGPU(resp)
+}
+
+// extractGPU pulls the "gpu" field from a control server response.
+func extractGPU(resp *http.Response) (json.RawMessage, error) {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var envelope struct {
+		GPU json.RawMessage `json:"gpu"`
+	}
+	if json.Unmarshal(body, &envelope) != nil {
+		return nil, nil
+	}
+	return envelope.GPU, nil
 }
 
 // Status returns the current state of a service.
