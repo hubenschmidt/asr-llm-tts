@@ -36,8 +36,14 @@ export const MetricsPanel = (props) => {
   );
 };
 
+const metricColor = (ms) => {
+  if (ms > 1000) return "#e74c3c";
+  if (ms > 500) return "#f39c12";
+  return "#00b8d4";
+};
+
 const MetricRow = (props) => {
-  const color = () => props.ms > 1000 ? "#e74c3c" : props.ms > 500 ? "#f39c12" : "#00b8d4";
+  const color = () => metricColor(props.ms);
   return (
     <div
       style={{

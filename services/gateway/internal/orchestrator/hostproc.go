@@ -25,7 +25,8 @@ func NewHTTPControlManager(registry *Registry) *HTTPControlManager {
 
 // Start launches a service via its HTTP control server.
 // Returns the raw GPU JSON from the control server response.
-func (h *HTTPControlManager) Start(ctx context.Context, name string) (json.RawMessage, error) {
+// Optional params are appended as query string (e.g. "model=ggml-large-v3.bin").
+func (h *HTTPControlManager) Start(ctx context.Context, name string, params ...string) (json.RawMessage, error) {
 	meta, ok := h.registry.Lookup(name)
 	if !ok {
 		return nil, fmt.Errorf("service %q not in registry", name)
@@ -33,7 +34,11 @@ func (h *HTTPControlManager) Start(ctx context.Context, name string) (json.RawMe
 	if meta.ControlURL == "" {
 		return nil, fmt.Errorf("service %q has no control URL", name)
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", meta.ControlURL+"/start", nil)
+	url := meta.ControlURL + "/start"
+	if len(params) > 0 {
+		url += "?" + params[0]
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
 	if err != nil {
 		return nil, err
 	}

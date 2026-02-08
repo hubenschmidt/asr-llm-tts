@@ -33,12 +33,8 @@ export const GPUPanel = (props) => {
     return "#2ecc71";
   };
 
-  const sseColor = () => {
-    const s = sseStatus();
-    if (s === "open") return "#2ecc71";
-    if (s === "connecting") return "#f1c40f";
-    return "#e74c3c";
-  };
+  const SSE_COLORS = { open: "#2ecc71", connecting: "#f1c40f" };
+  const sseColor = () => SSE_COLORS[sseStatus()] ?? "#e74c3c";
 
   return (
     <div class="gpu-container">

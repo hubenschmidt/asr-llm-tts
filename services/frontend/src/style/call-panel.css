@@ -348,3 +348,52 @@
   margin-bottom: 6px;
   font-weight: 400;
 }
+
+/* === STT model download list === */
+.stt-model-list {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stt-model-download-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  padding: 3px 0;
+}
+
+.stt-model-name { color: #4a6880; }
+
+/* === Download progress === */
+.download-progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.download-progress-bar {
+  flex: 1;
+  height: 4px;
+  background: #0f1420;
+  border: 1px solid #1a2535;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.download-progress-fill {
+  height: 100%;
+  background: #00b8d4;
+  border-radius: 2px;
+  transition: width 200ms linear;
+}
+
+.download-progress-text {
+  font-size: 9px;
+  color: #4a6880;
+  white-space: nowrap;
+}

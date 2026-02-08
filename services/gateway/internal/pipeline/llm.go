@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -36,6 +37,7 @@ func NewLLMClient(url, model, systemPrompt string, maxTokens, poolSize int) *LLM
 // LLMResult holds the complete LLM response with timing.
 type LLMResult struct {
 	Text               string  `json:"text"`
+	Thinking           string  `json:"thinking,omitempty"`
 	LatencyMs          float64 `json:"latency_ms"`
 	TimeToFirstTokenMs float64 `json:"ttft_ms"`
 }
@@ -57,21 +59,23 @@ func (c *LLMClient) Chat(ctx context.Context, userMessage, ragContext, systemPro
 
 	if resp.StatusCode != http.StatusOK {
 		metrics.Errors.WithLabelValues("llm", "status").Inc()
-		return nil, fmt.Errorf("llm status %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("llm status %d: %s", resp.StatusCode, body)
 	}
 
-	fullText, firstTokenTime := c.consumeStream(resp, onToken)
+	sr := c.consumeStream(resp, onToken)
 
 	latency := time.Since(start)
 	metrics.StageDuration.WithLabelValues("llm").Observe(latency.Seconds())
 
 	ttft := float64(0)
-	if !firstTokenTime.IsZero() {
-		ttft = float64(firstTokenTime.Sub(start).Milliseconds())
+	if !sr.ttft.IsZero() {
+		ttft = float64(sr.ttft.Sub(start).Milliseconds())
 	}
 
 	return &LLMResult{
-		Text:               fullText,
+		Text:               sr.text,
+		Thinking:           sr.thinking,
 		LatencyMs:          float64(latency.Milliseconds()),
 		TimeToFirstTokenMs: ttft,
 	}, nil
@@ -95,9 +99,9 @@ func (c *LLMClient) postChatRequest(ctx context.Context, userMessage, ragContext
 	messages = append(messages, ollamaMessage{Role: "user", Content: userMessage})
 
 	reqBody := ollamaRequest{
-		Model:   useModel,
-		Stream:  true,
-		Options: ollamaOptions{NumPredict: c.maxTokens},
+		Model:    useModel,
+		Stream:   true,
+		Options:  ollamaOptions{NumPredict: c.maxTokens},
 		Messages: messages,
 	}
 
@@ -121,35 +125,50 @@ func (c *LLMClient) postChatRequest(ctx context.Context, userMessage, ragContext
 	return resp, nil
 }
 
-func (c *LLMClient) consumeStream(resp *http.Response, onToken TokenCallback) (string, time.Time) {
-	var fullText string
-	var firstTokenTime time.Time
+type streamResult struct {
+	text     string
+	thinking string
+	ttft     time.Time
+}
+
+func (c *LLMClient) consumeStream(resp *http.Response, onToken TokenCallback) streamResult {
+	var sr streamResult
 	scanner := bufio.NewScanner(resp.Body)
 
 	for scanner.Scan() {
 		chunk := c.parseChunk(scanner.Bytes())
 		if chunk == nil {
-			return fullText, firstTokenTime
+			return sr
 		}
-		if chunk.Content == "" {
-			continue
-		}
-		if firstTokenTime.IsZero() {
-			firstTokenTime = time.Now()
-		}
-		fullText += chunk.Content
-		if onToken != nil {
-			onToken(chunk.Content)
-		}
+		sr = applyChunk(chunk, sr, onToken)
 	}
 
-	return fullText, firstTokenTime
+	return sr
+}
+
+func applyChunk(chunk *parsedChunk, sr streamResult, onToken TokenCallback) streamResult {
+	if chunk.Thinking != "" {
+		sr.thinking += chunk.Thinking
+		return sr
+	}
+	if chunk.Content == "" {
+		return sr
+	}
+	if sr.ttft.IsZero() {
+		sr.ttft = time.Now()
+	}
+	if onToken != nil {
+		onToken(chunk.Content)
+	}
+	sr.text += chunk.Content
+	return sr
 }
 
 // parsedChunk is the extracted content from an Ollama stream chunk.
 type parsedChunk struct {
-	Content string
-	Done    bool
+	Content  string
+	Thinking string
+	Done     bool
 }
 
 func (c *LLMClient) parseChunk(data []byte) *parsedChunk {
@@ -160,7 +179,7 @@ func (c *LLMClient) parseChunk(data []byte) *parsedChunk {
 	if chunk.Done {
 		return nil
 	}
-	return &parsedChunk{Content: chunk.Message.Content}
+	return &parsedChunk{Content: chunk.Message.Content, Thinking: chunk.Message.Thinking}
 }
 
 type ollamaRequest struct {
@@ -171,8 +190,9 @@ type ollamaRequest struct {
 }
 
 type ollamaMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role     string `json:"role"`
+	Content  string `json:"content"`
+	Thinking string `json:"thinking,omitempty"`
 }
 
 type ollamaOptions struct {

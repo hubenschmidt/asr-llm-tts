@@ -1,5 +1,9 @@
 import { createSignal } from "solid-js";
 
+const rmsLevel = (samples) => Math.sqrt(samples.reduce((sum, s) => sum + s * s, 0) / samples.length);
+
+const toPCM16 = (float32) => Int16Array.from(float32, (s) => Math.max(-32768, Math.min(32767, s * 32767)));
+
 export const useAudioStream = (opts) => {
   const [isStreaming, setIsStreaming] = createSignal(false);
   let ws = null;
@@ -38,6 +42,7 @@ export const useAudioStream = (opts) => {
         transcript: () => opts.onTranscript(event.text ?? ""),
         llm_token: () => opts.onLLMToken(event.token ?? ""),
         llm_done: () => opts.onLLMDone(event.text ?? ""),
+        thinking_done: () => opts.onThinkingDone?.(event.text ?? ""),
         metrics: () =>
           opts.onMetrics({
             asr_ms: event.asr_ms ?? 0,
@@ -74,20 +79,9 @@ export const useAudioStream = (opts) => {
 
       node.port.onmessage = (ev) => {
         const float32 = ev.data;
-
-        if (opts.onLevel) {
-          let sum = 0;
-          for (let i = 0; i < float32.length; i++) sum += float32[i] * float32[i];
-          opts.onLevel(Math.sqrt(sum / float32.length));
-        }
-
+        opts.onLevel?.(rmsLevel(float32));
         if (socket.readyState !== WebSocket.OPEN) return;
-
-        const pcm16 = new Int16Array(float32.length);
-        for (let i = 0; i < float32.length; i++) {
-          pcm16[i] = Math.max(-32768, Math.min(32767, float32[i] * 32767));
-        }
-        socket.send(pcm16.buffer);
+        socket.send(toPCM16(float32).buffer);
       };
 
       source.connect(node);
@@ -109,7 +103,7 @@ export const useAudioStream = (opts) => {
       if (socket.readyState === WebSocket.OPEN) return resolve();
       const origOpen = socket.onopen;
       socket.onopen = (ev) => {
-        if (origOpen) origOpen(ev);
+        origOpen?.(ev);
         resolve();
       };
     });
@@ -117,15 +111,10 @@ export const useAudioStream = (opts) => {
     const chunkSize = 320;
     setIsStreaming(true);
 
-    for (let i = 0; i < samples.length; i += chunkSize) {
-      if (socket.readyState !== WebSocket.OPEN) break;
-
-      const chunk = samples.slice(i, i + chunkSize);
-      const pcm16 = new Int16Array(chunk.length);
-      for (let j = 0; j < chunk.length; j++) {
-        pcm16[j] = Math.max(-32768, Math.min(32767, chunk[j] * 32767));
-      }
-      socket.send(pcm16.buffer);
+    let i = 0;
+    while (i < samples.length && socket.readyState === WebSocket.OPEN) {
+      socket.send(toPCM16(samples.slice(i, i + chunkSize)).buffer);
+      i += chunkSize;
       await new Promise((r) => setTimeout(r, 20));
     }
 

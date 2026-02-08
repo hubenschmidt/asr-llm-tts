@@ -10,6 +10,8 @@ import {
   fetchServices as apiFetchServices,
   startService as apiStartService,
   stopService as apiStopService,
+  fetchSTTModels as apiFetchSTTModels,
+  downloadSTTModel as apiDownloadSTTModel,
 } from "../api/services";
 import { warmupTTS } from "../api/tts";
 import "../style/call-panel.css";
@@ -19,17 +21,6 @@ import { MetricsPanel } from "./MetricsPanel";
 
 const DEFAULT_PROMPT =
   "You are a helpful call center agent. Keep responses concise and conversational.";
-
-const stripThinking = (text) => {
-  let result = text.replace(/<think>[\s\S]*?<\/think>/g, "");
-  result = result.replace(/<think>[\s\S]*$/g, "");
-  return result.trim();
-};
-
-const extractThinking = (text) => {
-  const match = text.match(/<think>([\s\S]*?)<\/think>/);
-  return match ? match[1].trim() : "";
-};
 
 // Only host-managed services that need start/stop via whisper-control.
 // Docker services (piper, kokoro, chatterbox, melotts, faster-whisper) are always running.
@@ -52,12 +43,19 @@ export const CallPanel = () => {
   const [availableTTS, setAvailableTTS] = createSignal([]);
   const [transcripts, setTranscripts] = createSignal([]);
   const [llmResponse, setLlmResponse] = createSignal("");
+  const [pendingThinking, setPendingThinking] = createSignal("");
   const [latestMetrics, setLatestMetrics] = createSignal(null);
   const [metricsHistory, setMetricsHistory] = createSignal([]);
   const [error, setError] = createSignal(null);
   const [micLevel, setMicLevel] = createSignal(0);
   const [serviceStatuses, setServiceStatuses] = createSignal({});
   const [soundChecking, setSoundChecking] = createSignal(false);
+  const [sttModels, setSttModels] = createSignal([]);
+  const [sttModel, _setSttModel] = createSignal(localStorage.getItem("sttModel") || "");
+  const [downloadingModel, setDownloadingModel] = createSignal("");
+  const [downloadProgress, setDownloadProgress] = createSignal(null);
+
+  const setSttModel = (v) => { _setSttModel(v); localStorage.setItem("sttModel", v); };
 
   let playAudioCtx = null;
   let playAt = 0;
@@ -124,19 +122,23 @@ export const CallPanel = () => {
   const fetchServices = () => {
     apiFetchServices()
       .then((data) => {
-        const map = {};
-        for (const svc of data) map[svc.name] = svc.status;
-        setServiceStatuses(map);
+        setServiceStatuses(Object.fromEntries(data.map((svc) => [svc.name, svc.status])));
         if (sttEngine()) return;
-        for (const svc of data) {
-          if (svc.category !== "stt") continue;
-          if (svc.status !== "healthy" && svc.status !== "running") continue;
-          const engine = SERVICE_TO_STT[svc.name];
-          if (engine) {
-            setSttEngine(engine);
-            return;
-          }
-        }
+        const healthySTT = data
+          .filter((svc) => svc.category === "stt")
+          .filter((svc) => svc.status === "healthy" || svc.status === "running")
+          .map((svc) => SERVICE_TO_STT[svc.name])
+          .find((engine) => engine);
+        if (healthySTT) setSttEngine(healthySTT);
+      })
+      .catch(() => {});
+  };
+
+  const fetchSTTModels = () => {
+    apiFetchSTTModels()
+      .then((data) => {
+        setSttModels(data.models || []);
+        if (!sttModel() && data.active) setSttModel(data.active);
       })
       .catch(() => {});
   };
@@ -144,11 +146,12 @@ export const CallPanel = () => {
   onMount(() => {
     fetchModels();
     fetchServices();
+    fetchSTTModels();
   });
 
-  const startService = async (serviceName) => {
+  const startService = async (serviceName, params) => {
     setServiceStatuses((prev) => ({ ...prev, [serviceName]: "starting" }));
-    await apiStartService(serviceName);
+    await apiStartService(serviceName, params);
     setServiceStatuses((prev) => ({ ...prev, [serviceName]: "healthy" }));
   };
 
@@ -160,33 +163,29 @@ export const CallPanel = () => {
   const RED = "#e74c3c";
   const YELLOW = "#f1c40f";
   const GREEN = "#2ecc71";
+  const STATUS_COLORS = { healthy: GREEN, running: YELLOW, starting: YELLOW };
+
+  const serviceColor = (svc) => STATUS_COLORS[serviceStatuses()[svc]] ?? RED;
 
   const sttDotColor = () => {
     if (!sttEngine()) return RED;
     if (loadingSTT()) return YELLOW;
     const svc = ENGINE_TO_SERVICE[sttEngine()];
     if (!svc) return GREEN;
-    const s = serviceStatuses()[svc] ?? "stopped";
-    if (s === "healthy") return GREEN;
-    if (s === "running" || s === "starting") return YELLOW;
-    return RED;
+    return serviceColor(svc);
   };
 
   const llmDotColor = () => {
     if (loadingLLM()) return YELLOW;
-    if (llmModel()) return GREEN;
-    return RED;
+    return llmModel() ? GREEN : RED;
   };
 
   const ttsDotColor = () => {
     if (!ttsEngine()) return RED;
     if (loadingTTS()) return YELLOW;
     const svc = ENGINE_TO_SERVICE[ttsEngine()];
-    if (!svc) return ttsEngine() ? GREEN : RED;
-    const s = serviceStatuses()[svc] ?? "stopped";
-    if (s === "healthy") return GREEN;
-    if (s === "running" || s === "starting") return YELLOW;
-    return RED;
+    if (!svc) return GREEN;
+    return serviceColor(svc);
   };
 
   const playAudio = (data) => {
@@ -211,11 +210,11 @@ export const CallPanel = () => {
       setTranscripts((prev) => [...prev, { role: "user", text }]),
     onLLMToken: (token) => setLlmResponse((prev) => prev + token),
     onLLMDone: (text) => {
-      const thinking = extractThinking(text);
-      const clean = stripThinking(text);
-      setTranscripts((prev) => [...prev, { role: "agent", text: clean, thinking }]);
+      setTranscripts((prev) => [...prev, { role: "agent", text, thinking: pendingThinking() }]);
       setLlmResponse("");
+      setPendingThinking("");
     },
+    onThinkingDone: (text) => setPendingThinking(text),
     onAudio: playAudio,
     onMetrics: (m) => {
       setLatestMetrics(m);
@@ -236,12 +235,39 @@ export const CallPanel = () => {
       return;
     }
     setLoadingSTT(true);
+    const modelParam = sttModel() ? `model=${sttModel()}` : "";
     unload
-      .then(() => startService(svc))
+      .then(() => startService(svc, modelParam))
       .catch((err) =>
         setError(`STT start failed: ${err instanceof Error ? err.message : err}`),
       )
       .finally(() => setLoadingSTT(false));
+  };
+
+  const handleSTTModelChange = (e) => {
+    const model = e.target.value;
+    if (!model) return;
+    setSttModel(model);
+    const svc = ENGINE_TO_SERVICE[sttEngine()];
+    if (!svc) return;
+    setLoadingSTT(true);
+    stopService(svc)
+      .then(() => startService(svc, `model=${model}`))
+      .catch((err) =>
+        setError(`STT model switch failed: ${err instanceof Error ? err.message : err}`),
+      )
+      .finally(() => setLoadingSTT(false));
+  };
+
+  const handleSTTModelDownload = (name) => {
+    setDownloadingModel(name);
+    setDownloadProgress(null);
+    apiDownloadSTTModel(name, (bytes, total) => setDownloadProgress({ bytes, total }))
+      .then(() => fetchSTTModels())
+      .catch((err) =>
+        setError(`Download failed: ${err instanceof Error ? err.message : err}`),
+      )
+      .finally(() => { setDownloadingModel(""); setDownloadProgress(null); });
   };
 
   const handleLLMChange = (e) => {
@@ -265,10 +291,8 @@ export const CallPanel = () => {
     setTtsEngine(engine);
     setLoadingTTS(true);
     const svc = ENGINE_TO_SERVICE[engine];
-    const ready =
-      svc && serviceStatuses()[svc] !== "healthy"
-        ? startService(svc)
-        : Promise.resolve();
+    const needsStart = svc && serviceStatuses()[svc] !== "healthy";
+    const ready = needsStart ? startService(svc) : Promise.resolve();
     ready
       .then(() => warmupTTS(engine))
       .catch((err) =>
@@ -324,7 +348,7 @@ export const CallPanel = () => {
                   <option value="">Select engine...</option>
                 </Show>
                 <optgroup label="whisper-server (GPU)">
-                  <option value="whisper-server">whisper-server GPU (medium)</option>
+                  <option value="whisper-server">whisper-server (GPU)</option>
                 </optgroup>
                 <optgroup label="faster-whisper (INT8, CPU)">
                   <option value="faster-whisper">faster-whisper tiny-int8</option>
@@ -355,6 +379,65 @@ export const CallPanel = () => {
               </button>
             </div>
           </div>
+
+          {/* STT Model (whisper-server only) */}
+          <Show when={sttEngine() === "whisper-server" && sttModels().length > 0}>
+            <div class="model-group">
+              <label class="label">STT Model</label>
+              <select
+                value={sttModel()}
+                onChange={handleSTTModelChange}
+                class="select"
+                disabled={isStreaming() || loadingSTT()}
+              >
+                <Show when={!sttModel()}>
+                  <option value="">Select model...</option>
+                </Show>
+                <For each={sttModels()}>
+                  {(m) => (
+                    <option value={m.name} disabled={!m.downloaded}>
+                      {m.name.replace("ggml-", "").replace(".bin", "")}
+                      {m.downloaded ? ` (${m.size_mb} MB)` : " — not downloaded"}
+                    </option>
+                  )}
+                </For>
+              </select>
+              <div class="stt-model-list">
+                <For each={sttModels().filter((m) => !m.downloaded)}>
+                  {(m) => (
+                    <div class="stt-model-download-row">
+                      <span class="stt-model-name">{m.name.replace("ggml-", "").replace(".bin", "")}</span>
+                      <Show
+                        when={downloadingModel() === m.name && downloadProgress()}
+                        fallback={
+                          <button
+                            class="unload-btn"
+                            disabled={!!downloadingModel()}
+                            onClick={() => handleSTTModelDownload(m.name)}
+                          >
+                            {downloadingModel() === m.name ? "Starting..." : "Download"}
+                          </button>
+                        }
+                      >
+                        <div class="download-progress">
+                          <div class="download-progress-bar">
+                            <div
+                              class="download-progress-fill"
+                              style={{ width: `${downloadProgress().total > 0 ? (downloadProgress().bytes / downloadProgress().total * 100) : 0}%` }}
+                            />
+                          </div>
+                          <span class="download-progress-text">
+                            {Math.round(downloadProgress().bytes / 1024 / 1024)}
+                            {downloadProgress().total > 0 ? ` / ${Math.round(downloadProgress().total / 1024 / 1024)} MB` : " MB"}
+                          </span>
+                        </div>
+                      </Show>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </div>
+          </Show>
 
           {/* Language Model */}
           <div class="model-group">
@@ -473,11 +556,8 @@ export const CallPanel = () => {
               <TranscriptEntry role={t.role} text={t.text} thinking={t.thinking} />
             )}
           </For>
-          <Show when={stripThinking(llmResponse())}>
-            <p class="transcript-streaming">
-              <strong>Agent: </strong>
-              {stripThinking(llmResponse())}
-            </p>
+          <Show when={llmResponse() || pendingThinking()}>
+            <StreamingEntry text={llmResponse()} thinking={pendingThinking()} />
           </Show>
           <Show when={transcripts().length === 0 && !llmResponse()}>
             <p class="transcript-placeholder">Waiting for audio input...</p>
@@ -513,11 +593,7 @@ export const CallPanel = () => {
               class="btn"
               disabled={loadingLLM() || loadingTTS() || !llmModel() || !ttsEngine()}
             >
-              {loadingLLM()
-                ? "Loading model..."
-                : loadingTTS()
-                  ? "Checking TTS..."
-                  : "Talk"}
+              {talkBtnLabel(loadingLLM(), loadingTTS())}
             </button>
             <button
               onClick={() => fileInput.click()}
@@ -577,10 +653,43 @@ const TranscriptEntry = (props) => {
   );
 };
 
+const StreamingEntry = (props) => {
+  const [showThinking, setShowThinking] = createSignal(false);
+  return (
+    <div class="transcript-line transcript-agent">
+      <Show when={props.text}>
+        <p class="transcript-streaming">
+          <strong>Agent: </strong>
+          {props.text}
+        </p>
+      </Show>
+      <Show when={props.thinking}>
+        <button class="thinking-toggle" onClick={() => setShowThinking((v) => !v)}>
+          {showThinking() ? "Hide reasoning" : "Show reasoning"}
+        </button>
+        <Show when={showThinking()}>
+          <pre class="thinking-block">{props.thinking}</pre>
+        </Show>
+      </Show>
+    </div>
+  );
+};
+
+const talkBtnLabel = (loadingLLM, loadingTTS) => {
+  if (loadingLLM) return "Loading model...";
+  if (loadingTTS) return "Checking TTS...";
+  return "Talk";
+};
+
+const vuColor = (pct) => {
+  if (pct >= 70) return "#e74c3c";
+  if (pct >= 30) return "#f1c40f";
+  return "#2ecc71";
+};
+
 const VUMeter = (props) => {
   const pct = () => Math.min(100, props.level * 500);
-  const color = () =>
-    pct() < 30 ? "#2ecc71" : pct() < 70 ? "#f1c40f" : "#e74c3c";
+  const color = () => vuColor(pct());
   return (
     <div class="vu-track">
       <div class="vu-bar" style={{ width: `${pct()}%`, background: color() }} />

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,8 +16,6 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-
-	"encoding/json"
 
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/audio"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/models"
@@ -157,10 +156,8 @@ func main() {
 		loaded, _ := models.ListLoadedLLMs(context.Background(), cfg.ollamaURL)
 		modelIdx := 0
 		for i := range gpu.Processes {
-			if !strings.Contains(gpu.Processes[i].Name, "ollama") {
-				continue
-			}
-			if modelIdx < len(loaded) {
+			isOllama := strings.Contains(gpu.Processes[i].Name, "ollama")
+			if isOllama && modelIdx < len(loaded) {
 				gpu.Processes[i].Name = loaded[modelIdx].Name
 				modelIdx++
 			}
@@ -273,22 +270,9 @@ func main() {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		if req.Type == "llm" {
-			slog.Info("unloading llm model", "model", req.Model)
-			if err := models.UnloadLLM(r.Context(), cfg.ollamaURL, req.Model); err != nil {
-				slog.Error("unload model", "error", err)
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			loaded, err := models.ListLoadedLLMs(r.Context(), cfg.ollamaURL)
-			if err != nil {
-				slog.Warn("list loaded models after unload", "error", err)
-			}
-			names := make([]string, len(loaded))
-			for i, m := range loaded {
-				names[i] = m.Name
-			}
-			slog.Info("model unloaded", "model", req.Model, "still_loaded", names)
+		if err := unloadIfLLM(r.Context(), cfg.ollamaURL, req.Type, req.Model); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 		broadcastGPU(fetchGPU())
 		w.Header().Set("Content-Type", "application/json")
@@ -342,16 +326,7 @@ func main() {
 		}
 
 		// Stop all running GPU services (whisper-server, etc.)
-		svcs, _ := svcMgr.StatusAll(r.Context())
-		for _, svc := range svcs {
-			if svc.Status == orchestrator.StatusStopped {
-				continue
-			}
-			slog.Info("unload-all stopping service", "name", svc.Name)
-			if _, err := svcMgr.Stop(r.Context(), svc.Name); err != nil {
-				slog.Warn("unload-all stop", "name", svc.Name, "error", err)
-			}
-		}
+		stopRunningServices(r.Context(), svcMgr, "unload-all")
 
 		// Fetch + broadcast fresh GPU state
 		data := fetchGPU()
@@ -409,6 +384,44 @@ func main() {
 		}
 	})
 
+	mux.HandleFunc("GET /api/stt/models", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.whisperControlURL == "" {
+			http.Error(w, "whisper-control not configured", http.StatusServiceUnavailable)
+			return
+		}
+		resp, err := http.Get(cfg.whisperControlURL + "/models")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set("Content-Type", "application/json")
+		io.Copy(w, resp.Body)
+	})
+
+	mux.HandleFunc("POST /api/stt/models/download", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.whisperControlURL == "" {
+			http.Error(w, "whisper-control not configured", http.StatusServiceUnavailable)
+			return
+		}
+		// No timeout — large model downloads can take minutes
+		client := &http.Client{}
+		resp, err := client.Post(cfg.whisperControlURL+"/models/download", "application/json", r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		// Stream progress through to frontend
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.WriteHeader(resp.StatusCode)
+		flush := func() {}
+		if f, ok := w.(http.Flusher); ok {
+			flush = f.Flush
+		}
+		io.Copy(&flushWriter{w: w, flush: flush}, resp.Body)
+	})
+
 	mux.HandleFunc("GET /api/services", func(w http.ResponseWriter, r *http.Request) {
 		services, err := svcMgr.StatusAll(r.Context())
 		if err != nil {
@@ -421,7 +434,11 @@ func main() {
 	mux.HandleFunc("POST /api/services/{name}/start", func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 		slog.Info("service start requested", "name", name)
-		gpuData, err := svcMgr.Start(r.Context(), name)
+		var params []string
+		if q := r.URL.RawQuery; q != "" {
+			params = append(params, q)
+		}
+		gpuData, err := svcMgr.Start(r.Context(), name, params...)
 		if err != nil {
 			slog.Error("service start failed", "name", name, "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -477,16 +494,7 @@ func main() {
 
 		// Stop all ML services
 		slog.Info("stopping ML services")
-		svcs, _ := svcMgr.StatusAll(ctx)
-		for _, svc := range svcs {
-			if svc.Status == orchestrator.StatusStopped {
-				continue
-			}
-			slog.Info("stopping service", "name", svc.Name)
-			if _, err := svcMgr.Stop(ctx, svc.Name); err != nil {
-				slog.Warn("stop service", "name", svc.Name, "error", err)
-			}
-		}
+		stopRunningServices(ctx, svcMgr, "shutdown")
 
 		srv.Shutdown(ctx)
 	}()
@@ -594,4 +602,56 @@ func envFloat(key string, fallback float64) float64 {
 		return fallback
 	}
 	return f
+}
+
+// unloadIfLLM unloads an LLM model from ollama if the type is "llm".
+func unloadIfLLM(ctx context.Context, ollamaURL, typ, model string) error {
+	if typ != "llm" {
+		return nil
+	}
+	slog.Info("unloading llm model", "model", model)
+	if err := models.UnloadLLM(ctx, ollamaURL, model); err != nil {
+		slog.Error("unload model", "error", err)
+		return err
+	}
+	loaded, err := models.ListLoadedLLMs(ctx, ollamaURL)
+	if err != nil {
+		slog.Warn("list loaded models after unload", "error", err)
+	}
+	names := make([]string, len(loaded))
+	for i, m := range loaded {
+		names[i] = m.Name
+	}
+	slog.Info("model unloaded", "model", model, "still_loaded", names)
+	return nil
+}
+
+// stopRunningServices stops all services that aren't already stopped.
+func stopRunningServices(ctx context.Context, svcMgr *orchestrator.HTTPControlManager, label string) {
+	svcs, _ := svcMgr.StatusAll(ctx)
+	for _, svc := range svcs {
+		stopIfRunning(ctx, svcMgr, svc, label)
+	}
+}
+
+func stopIfRunning(ctx context.Context, svcMgr *orchestrator.HTTPControlManager, svc orchestrator.ServiceInfo, label string) {
+	if svc.Status == orchestrator.StatusStopped {
+		return
+	}
+	slog.Info(label+" stopping service", "name", svc.Name)
+	if _, err := svcMgr.Stop(ctx, svc.Name); err != nil {
+		slog.Warn(label+" stop", "name", svc.Name, "error", err)
+	}
+}
+
+// flushWriter wraps an http.ResponseWriter and flushes after each write.
+type flushWriter struct {
+	w     io.Writer
+	flush func()
+}
+
+func (fw *flushWriter) Write(p []byte) (int, error) {
+	n, err := fw.w.Write(p)
+	fw.flush()
+	return n, err
 }
