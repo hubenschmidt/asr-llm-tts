@@ -61,7 +61,7 @@ export const useAudioStream = (opts) => {
       audioCtx = new AudioContext();
       const socket = connect();
 
-      await audioCtx.audioWorklet.addModule(createWorkletURL());
+      await audioCtx.audioWorklet.addModule("/pcm-sender.js");
 
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, autoGainControl: true, noiseSuppression: true },
@@ -147,21 +147,4 @@ export const useAudioStream = (opts) => {
   };
 
   return { isStreaming, startMic, startFile, stop };
-};
-
-const createWorkletURL = () => {
-  const code = `
-class PCMSender extends AudioWorkletProcessor {
-  process(inputs) {
-    const input = inputs[0];
-    if (input.length > 0) {
-      this.port.postMessage(new Float32Array(input[0]));
-    }
-    return true;
-  }
-}
-registerProcessor('pcm-sender', PCMSender);
-`;
-  const blob = new Blob([code], { type: "application/javascript" });
-  return URL.createObjectURL(blob);
 };

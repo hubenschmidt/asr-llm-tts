@@ -31,6 +31,7 @@ services:
       - "3001:3001"
     volumes:
       - ./services/frontend/src:/app/src
+      - ./services/frontend/public:/app/public
       - ./services/frontend/index.html:/app/index.html
       - node-modules:/app/node_modules
     depends_on:
