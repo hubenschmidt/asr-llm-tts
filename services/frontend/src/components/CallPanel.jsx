@@ -227,15 +227,19 @@ export const CallPanel = () => {
 
   const handleSTTChange = (e) => {
     const engine = e.target.value;
+    const prevSvc = ENGINE_TO_SERVICE[sttEngine()];
     setSttEngine(engine);
     const svc = ENGINE_TO_SERVICE[engine];
-    if (!svc || serviceStatuses()[svc] === "healthy") return;
+    const unload = prevSvc && prevSvc !== svc ? stopService(prevSvc) : Promise.resolve();
+    if (!svc || serviceStatuses()[svc] === "healthy") {
+      unload.catch(() => {});
+      return;
+    }
     setLoadingSTT(true);
-    startService(svc)
+    unload
+      .then(() => startService(svc))
       .catch((err) =>
-        setError(
-          `STT start failed: ${err instanceof Error ? err.message : err}`,
-        ),
+        setError(`STT start failed: ${err instanceof Error ? err.message : err}`),
       )
       .finally(() => setLoadingSTT(false));
   };
@@ -243,13 +247,14 @@ export const CallPanel = () => {
   const handleLLMChange = (e) => {
     const model = e.target.value;
     if (!model) return;
+    const prev = llmModel();
     setLlmModel(model);
     setLoadingLLM(true);
-    preloadModel(model)
+    const unload = prev && prev !== model ? unloadModel("llm", prev) : Promise.resolve();
+    unload
+      .then(() => preloadModel(model))
       .catch((err) =>
-        setError(
-          `Model preload failed: ${err instanceof Error ? err.message : err}`,
-        ),
+        setError(`Model preload failed: ${err instanceof Error ? err.message : err}`),
       )
       .finally(() => setLoadingLLM(false));
   };
