@@ -43,10 +43,51 @@ export const CallPanel = () => {
   const [error, setError] = createSignal(null);
   const [micLevel, setMicLevel] = createSignal(0);
   const [serviceStatuses, setServiceStatuses] = createSignal({});
+  const [soundChecking, setSoundChecking] = createSignal(false);
 
   let playAudioCtx = null;
   let playAt = 0;
   let fileInput;
+  let scCtx = null;
+  let scStream = null;
+  let scRaf = null;
+
+  const stopSoundCheck = () => {
+    cancelAnimationFrame(scRaf);
+    scStream?.getTracks().forEach((t) => t.stop());
+    scCtx?.close();
+    scCtx = null;
+    scStream = null;
+    scRaf = null;
+    setSoundChecking(false);
+    setMicLevel(0);
+  };
+
+  const toggleSoundCheck = async () => {
+    if (soundChecking()) { stopSoundCheck(); return; }
+    try {
+      scCtx = new AudioContext();
+      scStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, autoGainControl: true, noiseSuppression: true },
+      });
+      const source = scCtx.createMediaStreamSource(scStream);
+      const analyser = scCtx.createAnalyser();
+      analyser.fftSize = 256;
+      source.connect(analyser);
+      const buf = new Float32Array(analyser.fftSize);
+      const pump = () => {
+        analyser.getFloatTimeDomainData(buf);
+        let sum = 0;
+        for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+        setMicLevel(Math.sqrt(sum / buf.length));
+        scRaf = requestAnimationFrame(pump);
+      };
+      setSoundChecking(true);
+      pump();
+    } catch (err) {
+      setError(`Mic access failed: ${err instanceof Error ? err.message : err}`);
+    }
+  };
 
   const fetchModels = () => {
     apiFetchModels()
@@ -406,6 +447,13 @@ export const CallPanel = () => {
         </div>
 
         <div class="controls">
+          <button
+            onClick={toggleSoundCheck}
+            class={`btn ${soundChecking() ? "btn-danger" : "btn-secondary"}`}
+            disabled={isStreaming()}
+          >
+            {soundChecking() ? "Stop Check" : "Sound Check"}
+          </button>
           <Show
             when={!isStreaming()}
             fallback={
@@ -415,7 +463,7 @@ export const CallPanel = () => {
             }
           >
             <button
-              onClick={startMic}
+              onClick={() => { if (soundChecking()) stopSoundCheck(); startMic(); }}
               class="btn"
               disabled={
                 loadingLLM() || loadingTTS() || !llmModel() || !ttsEngine()
@@ -425,7 +473,7 @@ export const CallPanel = () => {
                 ? "Loading model..."
                 : loadingTTS()
                   ? "Checking TTS..."
-                  : "Start Mic"}
+                  : "Talk"}
             </button>
             <button
               onClick={() => fileInput.click()}
@@ -455,7 +503,7 @@ export const CallPanel = () => {
           placeholder="System prompt..."
         />
 
-        <Show when={isStreaming()}>
+        <Show when={isStreaming() || soundChecking()}>
           <VUMeter level={micLevel()} />
         </Show>
 

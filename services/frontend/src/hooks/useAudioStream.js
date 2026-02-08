@@ -64,7 +64,7 @@ export const useAudioStream = (opts) => {
       await audioCtx.audioWorklet.addModule(createWorkletURL());
 
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true },
+        audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, autoGainControl: true, noiseSuppression: true },
       });
       mediaStream = stream;
 
