@@ -122,14 +122,6 @@ services:
   #     - ml
   #   restart: unless-stopped
 
-  chatterbox:
-    image: travisvn/chatterbox-tts-api
-    ports:
-      - "8004:5123"
-    volumes:
-      - chatterbox-cache:/cache
-    restart: unless-stopped
-
   # melotts:
   #   image: timhagel/melotts-api-server
   #   ports:
@@ -169,5 +161,4 @@ volumes:
   go-build-cache:
   node-modules:
   # qdrant-data:
-  chatterbox-cache:
   # faster-whisper-cache:

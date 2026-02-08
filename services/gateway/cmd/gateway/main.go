@@ -60,9 +60,6 @@ func main() {
 	if cfg.kokoroURL != "" {
 		ttsBackends["kokoro"] = pipeline.NewOpenAISynthesizer(cfg.kokoroURL, "kokoro", "af_heart", ttsHTTP)
 	}
-	if cfg.chatterboxURL != "" {
-		ttsBackends["chatterbox"] = pipeline.NewOpenAISynthesizer(cfg.chatterboxURL, "chatterbox", "default", ttsHTTP)
-	}
 	if cfg.melottsURL != "" {
 		ttsBackends["melotts"] = pipeline.NewMeloSynthesizer(cfg.melottsURL, ttsHTTP)
 	}
@@ -528,7 +525,6 @@ type config struct {
 	ragTopK            int
 	ragScoreThreshold  float64
 	kokoroURL string
-	chatterboxURL      string
 	melottsURL         string
 	fasterWhisperURL   string
 	whisperServerURL   string
@@ -561,7 +557,6 @@ func loadConfig() config {
 		ragTopK:            envInt("RAG_TOP_K", 3),
 		ragScoreThreshold:  envFloat("RAG_SCORE_THRESHOLD", 0.7),
 		kokoroURL: envStr("KOKORO_URL", ""),
-		chatterboxURL:      envStr("CHATTERBOX_URL", ""),
 		melottsURL:         envStr("MELOTTS_URL", ""),
 		fasterWhisperURL:   envStr("FASTER_WHISPER_URL", ""),
 		whisperServerURL:   envStr("WHISPER_SERVER_URL", ""),

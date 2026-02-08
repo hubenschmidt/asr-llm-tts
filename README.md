@@ -19,7 +19,6 @@ Real-time voice pipeline for call center automation. Speak into the mic, get a t
 | Piper High | CPU | Most natural (109MB) |
 | Kokoro | CPU | Professional quality (82M params) |
 | MeloTTS | CPU | Real-time, multi-accent (208M params) |
-| Chatterbox | CPU/GPU | Near-ElevenLabs quality (350M params) |
 | ElevenLabs | Cloud API | Low latency, requires API key |
 
 ## STT engines
@@ -35,7 +34,7 @@ Browser captures mic audio over WebSocket. The Go gateway decodes, resamples to 
 
 Each WebSocket connection gets its own goroutine with context-based cancellation. LLM and TTS stages overlap via channels for sentence-level pipelining. A semaphore caps concurrent calls (default 100), returning 503 when full.
 
-GPU-bound services (whisper-server, Ollama) run on the host for direct ROCm access. Docker services (Piper, Kokoro, Chatterbox, MeloTTS, faster-whisper) run in containers. The `whisper-control` host process manages whisper-server lifecycle and exposes GPU monitoring.
+GPU-bound services (whisper-server, Ollama) run on the host for direct ROCm access. Docker services (Piper, Kokoro, MeloTTS, faster-whisper) run in containers. The `whisper-control` host process manages whisper-server lifecycle and exposes GPU monitoring.
 
 ## Setup
 

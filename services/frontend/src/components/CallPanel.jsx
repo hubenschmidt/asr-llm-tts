@@ -23,7 +23,7 @@ const DEFAULT_PROMPT =
   "You are a helpful call center agent. Keep responses concise and conversational.";
 
 // Only host-managed services that need start/stop via whisper-control.
-// Docker services (piper, kokoro, chatterbox, melotts, faster-whisper) are always running.
+// Docker services (piper, kokoro, melotts, faster-whisper) are always running.
 const ENGINE_TO_SERVICE = {
   "whisper-server": "whisper-server",
 };
@@ -505,7 +505,6 @@ export const CallPanel = () => {
                 </optgroup>
                 <optgroup label="Other Engines">
                   <option value="kokoro">Kokoro, professional, CPU (82M)</option>
-                  <option value="chatterbox">Chatterbox, near-ElevenLabs quality (350M)</option>
                   <option value="melotts">MeloTTS, CPU real-time, multi-accent (208M)</option>
                   <option
                     value="elevenlabs"
