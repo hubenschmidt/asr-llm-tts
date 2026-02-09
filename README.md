@@ -1,6 +1,6 @@
 # ASR-LLM-TTS Pipeline
 
-Real-time voice pipeline for call center automation, built for AMD GPUs via ROCm. Speak into the mic, get a transcription via ASR, a response from an LLM (Ollama), and hear it spoken back via TTS — all with sentence-level pipelining so you hear the first sentence before the LLM finishes generating.
+Real-time voice pipeline for call center automation, built for AMD GPUs via ROCm. Speak into the mic, get a transcription via ASR, a response from an LLM (Ollama), and hear it spoken back via TTS.
 
 ![Conversation Demo](spec/screenshots/conversation-demo.png)
 
@@ -12,21 +12,21 @@ Real-time voice pipeline for call center automation, built for AMD GPUs via ROCm
 
 ## TTS engines
 
-| Engine | Type | Notes |
-|--------|------|-------|
-| Piper Fast | CPU | Lowest latency (6MB) |
-| Piper Quality | CPU | Balanced (17MB) |
-| Piper High | CPU | Most natural (109MB) |
-| Kokoro | CPU | Professional quality (82M params) |
-| MeloTTS | CPU | Real-time, multi-accent (208M params) |
-| ElevenLabs | Cloud API | Low latency, requires API key |
+| Engine        | Type      | Notes                                 |
+| ------------- | --------- | ------------------------------------- |
+| Piper Fast    | CPU       | Lowest latency (6MB)                  |
+| Piper Quality | CPU       | Balanced (17MB)                       |
+| Piper High    | CPU       | Most natural (109MB)                  |
+| Kokoro        | CPU       | Professional quality (82M params)     |
+| MeloTTS       | CPU       | Real-time, multi-accent (208M params) |
+| ElevenLabs    | Cloud API | Low latency, requires API key         |
 
 ## STT engines
 
-| Engine | Type | Notes |
-|--------|------|-------|
+| Engine         | Type       | Notes                                                   |
+| -------------- | ---------- | ------------------------------------------------------- |
 | whisper-server | GPU (ROCm) | whisper.cpp with GPU acceleration, multiple model sizes |
-| faster-whisper | CPU | INT8 quantization, 4x speed on CPU |
+| faster-whisper | CPU        | INT8 quantization, 4x speed on CPU                      |
 
 ## Architecture
 
@@ -38,11 +38,11 @@ GPU-bound services (whisper-server, Ollama) run on the host for direct ROCm acce
 
 ## Codecs
 
-| Codec | Rate | Use case |
-|-------|------|----------|
-| PCM (16-bit LE) | Caller-specified | Browser frontend via WebSocket |
-| G.711 μ-law | 8000 Hz | Telephony ingest (SIP/RTP, Telnyx, Twilio) |
-| G.711 A-law | 8000 Hz | Telephony ingest (SIP/RTP, international) |
+| Codec           | Rate             | Use case                                   |
+| --------------- | ---------------- | ------------------------------------------ |
+| PCM (16-bit LE) | Caller-specified | Browser frontend via WebSocket             |
+| G.711 μ-law     | 8000 Hz          | Telephony ingest (SIP/RTP, Telnyx, Twilio) |
+| G.711 A-law     | 8000 Hz          | Telephony ingest (SIP/RTP, international)  |
 
 The browser path sends raw PCM. G.711 decoders are available for future telephony integration where SIP trunks or CPaaS APIs deliver μ-law/A-law audio.
 
@@ -96,18 +96,18 @@ docker compose run --rm loadtest --concurrency 10 --duration 30s
 
 Everything is in `.env`:
 
-| Variable | Default | What it does |
-|----------|---------|--------------|
-| OLLAMA_MODEL | llama3.2:3b | Default LLM model |
-| DEFAULT_TTS_ENGINE | fast | Default TTS engine |
-| ELEVENLABS_API_KEY | (empty) | Enables ElevenLabs TTS when set |
-| ELEVENLABS_VOICE_ID | 21m00Tcm4TlvDq8ikWAM | ElevenLabs voice |
-| ELEVENLABS_MODEL_ID | eleven_turbo_v2_5 | ElevenLabs model |
-| MAX_CONCURRENT_CALLS | 100 | Admission control limit |
-| LLM_MAX_TOKENS | 150 | Max LLM response tokens |
-| VAD_SILENCE_TIMEOUT_MS | 1000 | Wait after speech stops |
-| VAD_MIN_SPEECH_MS | 500 | Ignore audio shorter than this |
-| ASR/LLM/TTS_POOL_SIZE | 50 | HTTP connection pool per backend |
+| Variable               | Default              | What it does                     |
+| ---------------------- | -------------------- | -------------------------------- |
+| OLLAMA_MODEL           | llama3.2:3b          | Default LLM model                |
+| DEFAULT_TTS_ENGINE     | fast                 | Default TTS engine               |
+| ELEVENLABS_API_KEY     | (empty)              | Enables ElevenLabs TTS when set  |
+| ELEVENLABS_VOICE_ID    | 21m00Tcm4TlvDq8ikWAM | ElevenLabs voice                 |
+| ELEVENLABS_MODEL_ID    | eleven_turbo_v2_5    | ElevenLabs model                 |
+| MAX_CONCURRENT_CALLS   | 100                  | Admission control limit          |
+| LLM_MAX_TOKENS         | 150                  | Max LLM response tokens          |
+| VAD_SILENCE_TIMEOUT_MS | 1000                 | Wait after speech stops          |
+| VAD_MIN_SPEECH_MS      | 500                  | Ignore audio shorter than this   |
+| ASR/LLM/TTS_POOL_SIZE  | 50                   | HTTP connection pool per backend |
 
 ## Project layout
 
