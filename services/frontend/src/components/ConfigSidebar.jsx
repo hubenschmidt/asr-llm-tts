@@ -18,7 +18,7 @@ export const ConfigSidebar = (props) => {
           <label class="label">
             <StatusDot color={on.sttDotColor()} />
             STT Engine
-            <Tooltip text="Speech-to-text engine. whisper ROCm uses GPU acceleration. faster-whisper uses INT8 quantization for 4x speed on CPU." />
+            <Tooltip text="Speech-to-text engine. whisper-server uses GPU acceleration via whisper.cpp." />
           </label>
           <div class="model-row-inner">
             <select
@@ -32,9 +32,6 @@ export const ConfigSidebar = (props) => {
               </Show>
               <optgroup label="whisper-server (GPU)">
                 <option value="whisper-server">whisper-server (GPU)</option>
-              </optgroup>
-              <optgroup label="faster-whisper (INT8, CPU)">
-                <option value="faster-whisper">faster-whisper tiny-int8</option>
               </optgroup>
             </select>
             <Show when={c.loadingSTT()}>

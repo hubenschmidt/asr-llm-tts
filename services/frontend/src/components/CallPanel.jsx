@@ -24,7 +24,7 @@ const DEFAULT_PROMPT =
   "You are a helpful call center agent. Keep responses concise and conversational.";
 
 // Only host-managed services that need start/stop via whisper-control.
-// Docker services (piper, kokoro, melotts, faster-whisper) are always running.
+// Docker services (piper, kokoro, melotts) are always running.
 const ENGINE_TO_SERVICE = {
   "whisper-server": "whisper-server",
 };
@@ -116,7 +116,6 @@ export const CallPanel = () => {
 
   const SERVICE_TO_STT = {
     "whisper-server": "whisper-server",
-    "faster-whisper": "faster-whisper",
   };
 
   const fetchServices = () => {

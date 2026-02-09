@@ -32,9 +32,6 @@ func main() {
 
 	// ASR backends
 	asrBackends := map[string]pipeline.ASRTranscriber{}
-	if cfg.fasterWhisperURL != "" {
-		asrBackends["faster-whisper"] = pipeline.NewFasterWhisperClient(cfg.fasterWhisperURL, "tiny-int8", cfg.asrPoolSize)
-	}
 	if cfg.whisperServerURL != "" {
 		asrBackends["whisper-server"] = pipeline.NewASRClient(cfg.whisperServerURL, cfg.asrPoolSize)
 	}

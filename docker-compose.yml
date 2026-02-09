@@ -132,19 +132,6 @@ services:
   #     - ml
   #   restart: unless-stopped
 
-  # faster-whisper:
-  #   image: ghcr.io/speaches-ai/speaches:latest-cpu
-  #   ports:
-  #     - "8100:8000"
-  #   environment:
-  #     - WHISPER__MODEL=tiny-int8
-  #     - WHISPER__DEVICE=cpu
-  #   volumes:
-  #     - faster-whisper-cache:/home/ubuntu/.cache/huggingface/hub
-  #   profiles:
-  #     - ml
-  #   restart: unless-stopped
-
   # loadtest:
   #   build:
   #     context: ./services/loadtest
@@ -161,4 +148,3 @@ volumes:
   go-build-cache:
   node-modules:
   # qdrant-data:
-  # faster-whisper-cache:

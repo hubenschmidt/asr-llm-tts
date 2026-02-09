@@ -28,7 +28,6 @@ type config struct {
 	ragScoreThreshold  float64
 	kokoroURL          string
 	melottsURL         string
-	fasterWhisperURL   string
 	whisperServerURL   string
 	whisperControlURL  string
 	elevenlabsAPIKey   string
@@ -60,7 +59,6 @@ func loadConfig() config {
 		ragScoreThreshold:  envFloat("RAG_SCORE_THRESHOLD", 0.7),
 		kokoroURL:          envStr("KOKORO_URL", ""),
 		melottsURL:         envStr("MELOTTS_URL", ""),
-		fasterWhisperURL:   envStr("FASTER_WHISPER_URL", ""),
 		whisperServerURL:   envStr("WHISPER_SERVER_URL", ""),
 		whisperControlURL:  envStr("WHISPER_CONTROL_URL", ""),
 		elevenlabsAPIKey:   envStr("ELEVENLABS_API_KEY", ""),
