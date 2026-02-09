@@ -108,14 +108,7 @@ func (p *Pipeline) runFullPipeline(ctx context.Context, speechAudio []float32, t
 	onEvent(Event{Type: "transcript", Text: transcript, LatencyMs: asrResult.LatencyMs})
 
 	// RAG — retrieve relevant context (non-fatal on error)
-	var ragContext string
-	if p.cfg.RAGClient != nil {
-		ragCtx, ragErr := p.cfg.RAGClient.RetrieveContext(ctx, transcript)
-		if ragErr != nil {
-			slog.Error("rag retrieval", "error", ragErr)
-		}
-		ragContext = ragCtx
-	}
+	ragContext := p.retrieveRAGContext(ctx, transcript)
 
 	// LLM→TTS sentence pipelining: TTS starts on each sentence while LLM keeps generating
 	ttsLatencyMs, llmResult, err := p.streamLLMWithTTS(ctx, transcript, ragContext, ttsEngine, onEvent)
@@ -142,6 +135,18 @@ func (p *Pipeline) runFullPipeline(ctx context.Context, speechAudio []float32, t
 	})
 
 	return nil
+}
+
+func (p *Pipeline) retrieveRAGContext(ctx context.Context, transcript string) string {
+	if p.cfg.RAGClient == nil {
+		return ""
+	}
+	ragCtx, err := p.cfg.RAGClient.RetrieveContext(ctx, transcript)
+	if err != nil {
+		slog.Error("rag retrieval", "error", err)
+		return ""
+	}
+	return ragCtx
 }
 
 // streamLLMWithTTS runs LLM streaming and TTS synthesis concurrently using a

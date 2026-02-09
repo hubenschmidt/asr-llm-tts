@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/metrics"
-	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/prompts"
 )
 
 // LLMClient streams chat completions from Ollama.
@@ -94,7 +93,7 @@ func (c *LLMClient) postChatRequest(ctx context.Context, userMessage, ragContext
 		{Role: "system", Content: sysPrompt},
 	}
 	if ragContext != "" {
-		messages = append(messages, ollamaMessage{Role: "system", Content: prompts.RAGContext(ragContext)})
+		messages = append(messages, ollamaMessage{Role: "system", Content: "Relevant context from knowledge base:\n" + ragContext})
 	}
 	messages = append(messages, ollamaMessage{Role: "user", Content: userMessage})
 

@@ -65,16 +65,6 @@ func NewASRClient(url string, poolSize int) *MultipartASRClient {
 	}
 }
 
-// NewROCmWhisperClient creates a client for the ROCm whisper API (/transcribe endpoint).
-func NewROCmWhisperClient(url string, poolSize int) *MultipartASRClient {
-	return &MultipartASRClient{
-		url:      url,
-		endpoint: "/transcribe",
-		label:    "rocm-whisper",
-		client:   NewPooledHTTPClient(poolSize, 60*time.Second),
-	}
-}
-
 // Warmup sends a tiny silent clip to verify the server is responsive.
 func (c *MultipartASRClient) Warmup(ctx context.Context) error {
 	silence := make([]float32, 16000) // 1 second of silence at 16kHz

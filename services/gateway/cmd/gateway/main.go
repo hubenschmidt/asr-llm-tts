@@ -14,7 +14,6 @@ import (
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/models"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/orchestrator"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/pipeline"
-	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/prompts"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/ws"
 )
 
@@ -38,7 +37,7 @@ type tuning struct {
 // defaultTuning returns sensible defaults matching gateway.json.
 func defaultTuning() tuning {
 	return tuning{
-		LLMSystemPrompt:    prompts.DefaultSystem,
+		LLMSystemPrompt:    "You are a helpful call center agent. Keep responses concise and conversational.",
 		LLMMaxTokens:       150,
 		EmbeddingModel:     "nomic-embed-text",
 		ASRPoolSize:        50,

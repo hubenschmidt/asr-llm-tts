@@ -12,7 +12,6 @@ import (
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/audio"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/metrics"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/pipeline"
-	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/prompts"
 )
 
 var upgrader = websocket.Upgrader{
@@ -112,7 +111,10 @@ func (h *Handler) runSession(conn *websocket.Conn) {
 	}
 
 	sessionID := pipeline.GenerateUUID()
-	systemPrompt := prompts.ForSession(meta.SystemPrompt)
+	systemPrompt := meta.SystemPrompt
+	if systemPrompt == "" {
+		systemPrompt = "You are a helpful call center agent. Keep responses concise and conversational."
+	}
 	slog.Info("call started", "session_id", sessionID, "codec", codec, "sample_rate", sampleRate, "tts_engine", ttsEngine, "stt_engine", sttEngine)
 
 	pipe := pipeline.New(pipeline.Config{
