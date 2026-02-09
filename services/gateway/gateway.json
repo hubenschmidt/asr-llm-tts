@@ -1,0 +1,14 @@
+{
+  "llm_system_prompt": "You are a helpful call center agent. Keep responses concise and conversational.",
+  "llm_max_tokens": 150,
+  "embedding_model": "nomic-embed-text",
+  "asr_pool_size": 50,
+  "llm_pool_size": 50,
+  "tts_pool_size": 50,
+  "qdrant_pool_size": 10,
+  "max_concurrent_calls": 100,
+  "vector_size": 768,
+  "rag_top_k": 3,
+  "rag_score_threshold": 0.7,
+  "vad_speech_threshold_db": -30
+}

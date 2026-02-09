@@ -24,26 +24,23 @@ type TTSResult struct {
 }
 
 // TTSRouter dispatches to the correct TTS backend based on engine name.
+// Wraps the generic Router with a TTS-specific Synthesize method that adds timing/metrics.
 type TTSRouter struct {
-	backends map[string]TTSSynthesizer
-	fallback string
+	*Router[TTSSynthesizer]
 }
 
-// NewTTSRouter creates a router with registered backends.
+// NewTTSRouter creates a router with registered TTS backends and a fallback default.
 func NewTTSRouter(backends map[string]TTSSynthesizer, fallback string) *TTSRouter {
-	return &TTSRouter{backends: backends, fallback: fallback}
+	return &TTSRouter{Router: NewRouter(backends, fallback)}
 }
 
-// Synthesize routes to the correct backend and wraps the result with timing.
+// Synthesize routes to the correct backend, synthesizes audio, and records latency metrics.
 func (r *TTSRouter) Synthesize(ctx context.Context, text, engine string) (*TTSResult, error) {
 	start := time.Now()
 
-	backend, ok := r.backends[engine]
-	if !ok {
-		backend, ok = r.backends[r.fallback]
-	}
-	if !ok {
-		return nil, fmt.Errorf("no TTS backend for engine %q", engine)
+	backend, err := r.Route(engine)
+	if err != nil {
+		return nil, err
 	}
 
 	audioData, err := backend.SynthesizeAudio(ctx, text)
@@ -61,7 +58,7 @@ func (r *TTSRouter) Synthesize(ctx context.Context, text, engine string) (*TTSRe
 	}, nil
 }
 
-// --- Piper backend ---
+// --- Piper backend (local neural TTS via piper-tts, returns WAV) ---
 
 type piperSynthesizer struct {
 	url    string
@@ -91,7 +88,7 @@ func (p *piperSynthesizer) SynthesizeAudio(ctx context.Context, text string) ([]
 	return doTTSRequest(p.client, req)
 }
 
-// --- OpenAI-compatible backend (Kokoro, Orpheus) ---
+// --- OpenAI-compatible backend (Kokoro, Orpheus — any server exposing /v1/audio/speech) ---
 
 type openaiSynthesizer struct {
 	url    string
@@ -125,21 +122,12 @@ func (o *openaiSynthesizer) SynthesizeAudio(ctx context.Context, text string) ([
 }
 
 // HasEngine reports whether the router has a backend for the given engine name.
+// Delegates to the embedded Router.Has method.
 func (r *TTSRouter) HasEngine(engine string) bool {
-	_, ok := r.backends[engine]
-	return ok
+	return r.Has(engine)
 }
 
-// Engines returns the names of all registered backends.
-func (r *TTSRouter) Engines() []string {
-	names := make([]string, 0, len(r.backends))
-	for k := range r.backends {
-		names = append(names, k)
-	}
-	return names
-}
-
-// --- ElevenLabs backend ---
+// --- ElevenLabs backend (cloud API, returns MP3 via api.elevenlabs.io) ---
 
 type elevenlabsSynthesizer struct {
 	apiKey  string
@@ -173,7 +161,7 @@ func (e *elevenlabsSynthesizer) SynthesizeAudio(ctx context.Context, text string
 	return doTTSRequest(e.client, req)
 }
 
-// --- MeloTTS backend ---
+// --- MeloTTS backend (self-hosted multilingual TTS, /convert/tts endpoint) ---
 
 type meloSynthesizer struct {
 	url    string

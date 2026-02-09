@@ -137,6 +137,9 @@ func (h *Handler) runSession(conn *websocket.Conn) {
 	slog.Info("call ended")
 }
 
+// processMessages reads binary audio frames from the WebSocket in a loop.
+// The first frame (text) was already consumed as callMetadata by runSession;
+// all subsequent binary frames are raw audio chunks fed into the pipeline.
 func processMessages(ctx context.Context, conn *websocket.Conn, pipe *pipeline.Pipeline, codec audio.Codec, sampleRate int, ttsEngine, sttEngine string, sendEvent pipeline.EventCallback) {
 	for {
 		msgType, data, err := conn.ReadMessage()

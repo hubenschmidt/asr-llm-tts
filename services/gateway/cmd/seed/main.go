@@ -15,9 +15,9 @@ import (
 
 func main() {
 	dir := flag.String("dir", "", "directory containing .txt files to seed")
-	ollamaURL := flag.String("ollama-url", envOr("OLLAMA_URL", "http://localhost:11434"), "Ollama URL")
-	model := flag.String("model", envOr("EMBEDDING_MODEL", "nomic-embed-text"), "embedding model")
-	qdrantURL := flag.String("qdrant-url", envOr("QDRANT_URL", "http://localhost:6333"), "Qdrant URL")
+	ollamaURL := flag.String("ollama-url", envStr("OLLAMA_URL", "http://localhost:11434"), "Ollama URL")
+	model := flag.String("model", envStr("EMBEDDING_MODEL", "nomic-embed-text"), "embedding model")
+	qdrantURL := flag.String("qdrant-url", envStr("QDRANT_URL", "http://localhost:6333"), "Qdrant URL")
 	collection := flag.String("collection", "knowledge_base", "Qdrant collection name")
 	vectorSize := flag.Int("vector-size", 768, "embedding vector dimension")
 	chunkSize := flag.Int("chunk-size", 500, "max characters per chunk")
@@ -141,10 +141,11 @@ func filterNonEmpty(ss []string) []string {
 	return out
 }
 
-func envOr(key, fallback string) string {
+func envStr(key, fallback string) string {
 	val := os.Getenv(key)
 	if val == "" {
 		return fallback
 	}
 	return val
 }
+

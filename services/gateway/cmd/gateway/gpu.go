@@ -41,6 +41,9 @@ func (h *gpuHub) unsubscribe(ch chan []byte) {
 	h.mu.Unlock()
 }
 
+// enrich augments raw GPU JSON by filtering out zero-VRAM processes and
+// replacing generic "ollama" process names with the actual loaded model names
+// so the frontend can display which LLM is consuming VRAM.
 func (h *gpuHub) enrich(raw []byte) []byte {
 	if raw == nil {
 		return nil

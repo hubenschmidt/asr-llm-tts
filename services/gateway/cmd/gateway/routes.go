@@ -16,14 +16,19 @@ import (
 )
 
 type deps struct {
-	cfg       config
-	asrRouter *pipeline.ASRRouter
-	ttsClient *pipeline.TTSRouter
-	svcMgr    *orchestrator.HTTPControlManager
-	gpu       *gpuHub
-	wsHandler http.Handler
+	ollamaURL         string
+	ollamaModel       string
+	whisperControlURL string
+	asrRouter         *pipeline.ASRRouter
+	ttsClient         *pipeline.TTSRouter
+	svcMgr            *orchestrator.HTTPControlManager
+	gpu               *gpuHub
+	wsHandler         http.Handler
 }
 
+// registerRoutes wires all HTTP endpoints to the shared mux.
+// Groups: WebSocket call handler, Prometheus metrics, model/GPU management,
+// TTS warmup, STT model management, and service orchestration CRUD.
 func registerRoutes(mux *http.ServeMux, d deps) {
 	mux.Handle("/ws/call", d.wsHandler)
 	mux.Handle("/metrics", promhttp.Handler())
@@ -33,12 +38,12 @@ func registerRoutes(mux *http.ServeMux, d deps) {
 	})
 
 	mux.HandleFunc("/api/models", func(w http.ResponseWriter, r *http.Request) {
-		llmModels, err := models.ListLLMModels(r.Context(), d.cfg.ollamaURL)
+		llmModels, err := models.ListLLMModels(r.Context(), d.ollamaURL)
 		if err != nil {
 			slog.Error("list llm models", "error", err)
-			llmModels = []string{d.cfg.ollamaModel}
+			llmModels = []string{d.ollamaModel}
 		}
-		loaded, _ := models.ListLoadedLLMs(r.Context(), d.cfg.ollamaURL)
+		loaded, _ := models.ListLoadedLLMs(r.Context(), d.ollamaURL)
 		loadedNames := make([]string, 0, len(loaded))
 		for _, m := range loaded {
 			loadedNames = append(loadedNames, m.Name)
@@ -48,7 +53,7 @@ func registerRoutes(mux *http.ServeMux, d deps) {
 				"engines": d.asrRouter.Engines(),
 			},
 			"llm": map[string]interface{}{
-				"active": d.cfg.ollamaModel,
+				"active": d.ollamaModel,
 				"models": llmModels,
 				"loaded": loadedNames,
 			},
@@ -73,7 +78,7 @@ func registerRoutes(mux *http.ServeMux, d deps) {
 			return
 		}
 		slog.Info("preloading llm model", "model", req.Model)
-		if err := models.PreloadLLM(r.Context(), d.cfg.ollamaURL, req.Model); err != nil {
+		if err := models.PreloadLLM(r.Context(), d.ollamaURL, req.Model); err != nil {
 			slog.Error("preload model", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -97,7 +102,7 @@ func registerRoutes(mux *http.ServeMux, d deps) {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		if err := unloadIfLLM(r.Context(), d.cfg.ollamaURL, req.Type, req.Model); err != nil {
+		if err := unloadIfLLM(r.Context(), d.ollamaURL, req.Type, req.Model); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -146,7 +151,7 @@ func registerRoutes(mux *http.ServeMux, d deps) {
 
 	mux.HandleFunc("POST /api/gpu/unload-all", func(w http.ResponseWriter, r *http.Request) {
 		slog.Info("unload-all requested")
-		if err := models.UnloadAllLLMs(r.Context(), d.cfg.ollamaURL); err != nil {
+		if err := models.UnloadAllLLMs(r.Context(), d.ollamaURL); err != nil {
 			slog.Warn("unload-all ollama", "error", err)
 		}
 		stopRunningServices(r.Context(), d.svcMgr, "unload-all")
@@ -204,11 +209,11 @@ func registerRoutes(mux *http.ServeMux, d deps) {
 	})
 
 	mux.HandleFunc("GET /api/stt/models", func(w http.ResponseWriter, r *http.Request) {
-		if d.cfg.whisperControlURL == "" {
+		if d.whisperControlURL == "" {
 			http.Error(w, "whisper-control not configured", http.StatusServiceUnavailable)
 			return
 		}
-		resp, err := http.Get(d.cfg.whisperControlURL + "/models")
+		resp, err := http.Get(d.whisperControlURL + "/models")
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
@@ -219,12 +224,12 @@ func registerRoutes(mux *http.ServeMux, d deps) {
 	})
 
 	mux.HandleFunc("POST /api/stt/models/download", func(w http.ResponseWriter, r *http.Request) {
-		if d.cfg.whisperControlURL == "" {
+		if d.whisperControlURL == "" {
 			http.Error(w, "whisper-control not configured", http.StatusServiceUnavailable)
 			return
 		}
 		client := &http.Client{}
-		resp, err := client.Post(d.cfg.whisperControlURL+"/models/download", "application/json", r.Body)
+		resp, err := client.Post(d.whisperControlURL+"/models/download", "application/json", r.Body)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return

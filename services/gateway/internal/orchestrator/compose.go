@@ -115,7 +115,7 @@ func (c *ComposeManager) Status(ctx context.Context, name string) (*ServiceInfo,
 		return info, nil
 	}
 
-	if c.probeHealth(ctx, meta.HealthURL) {
+	if probeHealth(ctx, c.httpClient, meta.HealthURL) {
 		info.Status = StatusHealthy
 	}
 
@@ -158,15 +158,3 @@ func (c *ComposeManager) containerState(ctx context.Context, name string) (strin
 	return strings.ToLower(entry.State), nil
 }
 
-func (c *ComposeManager) probeHealth(ctx context.Context, url string) bool {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return false
-	}
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return false
-	}
-	resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
-}

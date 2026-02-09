@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 )
 
 // ServiceStatus represents the lifecycle state of a managed service.
@@ -30,4 +31,19 @@ type ServiceManager interface {
 	Stop(ctx context.Context, name string) (json.RawMessage, error)
 	Status(ctx context.Context, name string) (*ServiceInfo, error)
 	StatusAll(ctx context.Context) ([]ServiceInfo, error)
+}
+
+// probeHealth sends a GET to the given URL and returns true if the response is 200 OK.
+// Used by both ComposeManager and HTTPControlManager to check service readiness.
+func probeHealth(ctx context.Context, client *http.Client, url string) bool {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }

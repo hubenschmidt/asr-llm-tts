@@ -26,29 +26,17 @@ type ASRResult struct {
 }
 
 // ASRRouter dispatches to the correct ASR backend based on engine name.
+// Wraps the generic Router with an ASR-specific Transcribe convenience method.
 type ASRRouter struct {
-	backends map[string]ASRTranscriber
-	fallback string
+	*Router[ASRTranscriber]
 }
 
-// NewASRRouter creates a router with registered backends.
+// NewASRRouter creates a router with registered ASR backends and a fallback default.
 func NewASRRouter(backends map[string]ASRTranscriber, fallback string) *ASRRouter {
-	return &ASRRouter{backends: backends, fallback: fallback}
+	return &ASRRouter{Router: NewRouter(backends, fallback)}
 }
 
-// Route returns the backend for the given engine name, falling back to the default.
-func (r *ASRRouter) Route(engine string) (ASRTranscriber, error) {
-	backend, ok := r.backends[engine]
-	if !ok {
-		backend, ok = r.backends[r.fallback]
-	}
-	if !ok {
-		return nil, fmt.Errorf("no ASR backend for engine %q", engine)
-	}
-	return backend, nil
-}
-
-// Transcribe routes to the correct backend.
+// Transcribe routes to the correct backend and transcribes the audio.
 func (r *ASRRouter) Transcribe(ctx context.Context, samples []float32, engine string) (*ASRResult, error) {
 	backend, err := r.Route(engine)
 	if err != nil {
@@ -57,39 +45,44 @@ func (r *ASRRouter) Transcribe(ctx context.Context, samples []float32, engine st
 	return backend.Transcribe(ctx, samples)
 }
 
-// Engines returns the names of all registered backends.
-func (r *ASRRouter) Engines() []string {
-	names := make([]string, 0, len(r.backends))
-	for k := range r.backends {
-		names = append(names, k)
-	}
-	return names
+// MultipartASRClient sends audio as multipart WAV to any whisper-compatible HTTP endpoint.
+// Different backends only vary by endpoint path (e.g. /inference for whisper.cpp,
+// /transcribe for ROCm whisper). The label field is used in error messages and logs.
+type MultipartASRClient struct {
+	url      string
+	endpoint string
+	label    string
+	client   *http.Client
 }
 
-// --- whisper.cpp backend ---
-
-// ASRClient sends audio to whisper.cpp server and returns transcriptions.
-type ASRClient struct {
-	url    string
-	client *http.Client
-}
-
-// NewASRClient creates a client pointing at the whisper.cpp server URL.
-func NewASRClient(url string, poolSize int) *ASRClient {
-	return &ASRClient{
-		url:    url,
-		client: NewPooledHTTPClient(poolSize, 30*time.Second),
+// NewASRClient creates a client for whisper.cpp (/inference endpoint).
+func NewASRClient(url string, poolSize int) *MultipartASRClient {
+	return &MultipartASRClient{
+		url:      url,
+		endpoint: "/inference",
+		label:    "whisper",
+		client:   NewPooledHTTPClient(poolSize, 30*time.Second),
 	}
 }
 
-// Warmup sends a tiny silent clip to the whisper server to verify it's responsive.
-func (c *ASRClient) Warmup(ctx context.Context) error {
+// NewROCmWhisperClient creates a client for the ROCm whisper API (/transcribe endpoint).
+func NewROCmWhisperClient(url string, poolSize int) *MultipartASRClient {
+	return &MultipartASRClient{
+		url:      url,
+		endpoint: "/transcribe",
+		label:    "rocm-whisper",
+		client:   NewPooledHTTPClient(poolSize, 60*time.Second),
+	}
+}
+
+// Warmup sends a tiny silent clip to verify the server is responsive.
+func (c *MultipartASRClient) Warmup(ctx context.Context) error {
 	silence := make([]float32, 16000) // 1 second of silence at 16kHz
 	body, contentType, err := buildMultipartAudio(silence)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", c.url+"/inference", body)
+	req, err := http.NewRequestWithContext(ctx, "POST", c.url+c.endpoint, body)
 	if err != nil {
 		return fmt.Errorf("create warmup request: %w", err)
 	}
@@ -97,19 +90,19 @@ func (c *ASRClient) Warmup(ctx context.Context) error {
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("asr warmup: %w", err)
+		return fmt.Errorf("%s warmup: %w", c.label, err)
 	}
 	defer resp.Body.Close()
 	io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("asr warmup status %d", resp.StatusCode)
+		return fmt.Errorf("%s warmup status %d", c.label, resp.StatusCode)
 	}
 	return nil
 }
 
-// Transcribe sends float32 audio samples (16kHz mono) to whisper.cpp and returns the transcript.
-func (c *ASRClient) Transcribe(ctx context.Context, samples []float32) (*ASRResult, error) {
+// Transcribe sends float32 audio samples (16kHz mono) as multipart WAV and returns the transcript.
+func (c *MultipartASRClient) Transcribe(ctx context.Context, samples []float32) (*ASRResult, error) {
 	start := time.Now()
 
 	body, contentType, err := buildMultipartAudio(samples)
@@ -117,90 +110,28 @@ func (c *ASRClient) Transcribe(ctx context.Context, samples []float32) (*ASRResu
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", c.url+"/inference", body)
+	req, err := http.NewRequestWithContext(ctx, "POST", c.url+c.endpoint, body)
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+		return nil, fmt.Errorf("create %s request: %w", c.label, err)
 	}
 	req.Header.Set("Content-Type", contentType)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
 		metrics.Errors.WithLabelValues("asr", "http").Inc()
-		return nil, fmt.Errorf("asr request: %w", err)
+		return nil, fmt.Errorf("%s request: %w", c.label, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		metrics.Errors.WithLabelValues("asr", "status").Inc()
-		return nil, fmt.Errorf("asr status %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	var whisperResp whisperResponse
-	if err = json.NewDecoder(resp.Body).Decode(&whisperResp); err != nil {
-		return nil, fmt.Errorf("decode asr response: %w", err)
-	}
-
-	latency := time.Since(start)
-	metrics.StageDuration.WithLabelValues("asr").Observe(latency.Seconds())
-
-	return &ASRResult{
-		Text:      whisperResp.Text,
-		LatencyMs: float64(latency.Milliseconds()),
-	}, nil
-}
-
-type whisperResponse struct {
-	Text string `json:"text"`
-}
-
-// --- ROCm whisper backend (jjajjara/rocm-whisper-api /transcribe) ---
-
-// ROCmWhisperClient sends audio to the ROCm-accelerated whisper API.
-type ROCmWhisperClient struct {
-	url    string
-	client *http.Client
-}
-
-// NewROCmWhisperClient creates a client for the ROCm whisper server.
-func NewROCmWhisperClient(url string, poolSize int) *ROCmWhisperClient {
-	return &ROCmWhisperClient{
-		url:    url,
-		client: NewPooledHTTPClient(poolSize, 60*time.Second),
-	}
-}
-
-// Transcribe sends audio to /transcribe as multipart form.
-func (c *ROCmWhisperClient) Transcribe(ctx context.Context, samples []float32) (*ASRResult, error) {
-	start := time.Now()
-
-	body, contentType, err := buildMultipartAudio(samples)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", c.url+"/transcribe", body)
-	if err != nil {
-		return nil, fmt.Errorf("create rocm-whisper request: %w", err)
-	}
-	req.Header.Set("Content-Type", contentType)
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		metrics.Errors.WithLabelValues("asr", "http").Inc()
-		return nil, fmt.Errorf("rocm-whisper request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		metrics.Errors.WithLabelValues("asr", "status").Inc()
-		return nil, fmt.Errorf("rocm-whisper status %d: %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("%s status %d: %s", c.label, resp.StatusCode, string(respBody))
 	}
 
 	var result whisperResponse
 	if err = json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode rocm-whisper response: %w", err)
+		return nil, fmt.Errorf("decode %s response: %w", c.label, err)
 	}
 
 	latency := time.Since(start)
@@ -210,6 +141,10 @@ func (c *ROCmWhisperClient) Transcribe(ctx context.Context, samples []float32) (
 		Text:      result.Text,
 		LatencyMs: float64(latency.Milliseconds()),
 	}, nil
+}
+
+type whisperResponse struct {
+	Text string `json:"text"`
 }
 
 // --- shared helpers ---

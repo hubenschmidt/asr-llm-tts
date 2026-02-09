@@ -9,7 +9,9 @@ import (
 	"time"
 )
 
-// HTTPControlManager manages services via lightweight HTTP control servers.
+// HTTPControlManager manages ML services via lightweight HTTP control servers
+// (as opposed to ComposeManager which shells out to docker compose).
+// Used when services run as host processes behind a control API.
 type HTTPControlManager struct {
 	httpClient *http.Client
 	registry   *Registry
@@ -122,7 +124,7 @@ func (h *HTTPControlManager) Status(ctx context.Context, name string) (*ServiceI
 	if meta.HealthURL == "" {
 		return info, nil
 	}
-	if h.probeHealth(ctx, meta.HealthURL) {
+	if probeHealth(ctx, h.httpClient, meta.HealthURL) {
 		info.Status = StatusHealthy
 	}
 	return info, nil
@@ -139,15 +141,3 @@ func (h *HTTPControlManager) StatusAll(ctx context.Context) ([]ServiceInfo, erro
 	return results, nil
 }
 
-func (h *HTTPControlManager) probeHealth(ctx context.Context, url string) bool {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return false
-	}
-	resp, err := h.httpClient.Do(req)
-	if err != nil {
-		return false
-	}
-	resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
-}

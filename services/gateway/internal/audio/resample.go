@@ -37,19 +37,18 @@ func Resample(samples []float32, srcRate, dstRate int) []float32 {
 }
 
 // lowPass applies a windowed-sinc FIR low-pass filter via convolution.
+// For each output sample, only the kernel taps overlapping the valid input range contribute.
 func lowPass(samples []float32, cutoff, sampleRate float64, taps int) []float32 {
 	kernel := sincKernel(cutoff, sampleRate, taps)
 	half := taps / 2
 	out := make([]float32, len(samples))
 
 	for i := range samples {
+		jStart := max(0, half-i)
+		jEnd := min(taps, len(samples)-i+half)
 		var sum float32
-		for j, k := range kernel {
-			si := i + j - half
-			if si < 0 || si >= len(samples) {
-				continue
-			}
-			sum += samples[si] * k
+		for j := jStart; j < jEnd; j++ {
+			sum += samples[i+j-half] * kernel[j]
 		}
 		out[i] = sum
 	}

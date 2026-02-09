@@ -87,6 +87,9 @@ func (p *Pipeline) Flush(ctx context.Context, ttsEngine, sttEngine string, onEve
 	return p.runFullPipeline(ctx, remaining, ttsEngine, sttEngine, onEvent)
 }
 
+// runFullPipeline executes the complete ASR → RAG → LLM → TTS chain for one speech segment.
+// ASR must complete first to produce the transcript. RAG retrieval is best-effort (non-fatal).
+// LLM and TTS run concurrently via sentence pipelining (see streamLLMWithTTS).
 func (p *Pipeline) runFullPipeline(ctx context.Context, speechAudio []float32, ttsEngine, sttEngine string, onEvent EventCallback) error {
 	e2eStart := time.Now()
 
@@ -141,8 +144,11 @@ func (p *Pipeline) runFullPipeline(ctx context.Context, speechAudio []float32, t
 	return nil
 }
 
-// streamLLMWithTTS runs LLM streaming and TTS synthesis concurrently.
-// As the LLM produces tokens, sentences are detected and sent to TTS immediately.
+// streamLLMWithTTS runs LLM streaming and TTS synthesis concurrently using a
+// producer/consumer pattern. The LLM streams tokens into a sentenceBuffer (producer);
+// when a sentence boundary is detected, the complete sentence is sent to a channel.
+// A goroutine (consumer) reads sentences and synthesizes audio via TTS in parallel,
+// so the first TTS audio is ready before the LLM finishes generating.
 func (p *Pipeline) streamLLMWithTTS(ctx context.Context, transcript, ragContext, ttsEngine string, onEvent EventCallback) (float64, *LLMResult, error) {
 	sentenceCh := make(chan string, 4)
 	var ttsWg sync.WaitGroup
