@@ -20,7 +20,7 @@ type deps struct {
 	ollamaModel       string
 	whisperControlURL string
 	asrRouter         *pipeline.ASRRouter
-	llmRouter         *pipeline.LLMRouter
+	llmRouter         *pipeline.AgentLLM
 	ttsClient         *pipeline.TTSRouter
 	svcMgr            *orchestrator.HTTPControlManager
 	gpu               *gpuHub

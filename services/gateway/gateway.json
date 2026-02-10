@@ -10,5 +10,9 @@
   "vector_size": 768,
   "rag_top_k": 3,
   "rag_score_threshold": 0.7,
-  "vad_speech_threshold_db": -30
+  "vad_speech_threshold_db": -30,
+  "openai_url": "https://api.openai.com",
+  "openai_model": "gpt-4.1-nano",
+  "anthropic_url": "https://api.anthropic.com",
+  "anthropic_model": "claude-sonnet-4-5"
 }

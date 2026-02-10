@@ -23,7 +23,7 @@ var upgrader = websocket.Upgrader{
 // HandlerConfig holds the shared backend clients for all call sessions.
 type HandlerConfig struct {
 	ASRClient     *pipeline.ASRRouter
-	LLMClient     *pipeline.LLMRouter
+	LLMClient     *pipeline.AgentLLM
 	TTSClient     *pipeline.TTSRouter
 	VADConfig     audio.VADConfig
 	MaxConcurrent int

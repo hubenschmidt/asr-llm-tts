@@ -119,12 +119,18 @@ export const CallPanel = () => {
         setOllamaModels(data.llm.models);
         if (data.llm?.engines) setAvailableLLMEngines(data.llm.engines);
         if (data.tts?.engines) setAvailableTTS(data.tts.engines);
-        if (llmModel()) return;
+
+        // Validate saved model belongs to the current engine's model list
         const cloud = CLOUD_MODELS[llmEngine()];
+        const validModels = cloud || data.llm.models;
+        if (llmModel() && validModels.includes(llmModel())) return;
+
+        // Reset to a sensible default for the current engine
         if (cloud) { setLlmModel(cloud[0]); return; }
         if (data.llm.loaded?.length > 0) { setLlmModel(data.llm.loaded[0]); return; }
         const saved = localStorage.getItem("llmModel");
-        if (saved && data.llm.models.includes(saved)) setLlmModel(saved);
+        if (saved && data.llm.models.includes(saved)) { setLlmModel(saved); return; }
+        setLlmModel("");
       })
       .catch(() => {});
   };

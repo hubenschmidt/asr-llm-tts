@@ -49,3 +49,38 @@ func splitAtSentence(text string) (string, string) {
 func isWordBoundary(ch byte) bool {
 	return ch == ' ' || ch == '\n' || ch == '\t'
 }
+
+// codeFilter strips markdown code fences (```) from a token stream.
+// Text inside fences is omitted; text outside is returned verbatim.
+type codeFilter struct {
+	inBlock   bool
+	pending   int // consecutive backticks seen so far
+}
+
+// Filter returns the portion of token that is outside code fences.
+func (f *codeFilter) Filter(token string) string {
+	var out strings.Builder
+	for i := range len(token) {
+		ch := token[i]
+		if ch == '`' {
+			f.pending++
+			if f.pending == 3 {
+				f.inBlock = !f.inBlock
+				f.pending = 0
+			}
+			continue
+		}
+		// flush non-fence backticks (e.g. inline code)
+		if f.pending > 0 && !f.inBlock {
+			for range f.pending {
+				out.WriteByte('`')
+			}
+		}
+		f.pending = 0
+		if f.inBlock {
+			continue
+		}
+		out.WriteByte(ch)
+	}
+	return out.String()
+}

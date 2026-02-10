@@ -10,6 +10,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nlpodyssey/openai-agents-go/agents"
+	"github.com/openai/openai-go/v2/packages/param"
+
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/audio"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/env"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/models"
@@ -33,6 +36,10 @@ type tuning struct {
 	RAGTopK            int     `json:"rag_top_k"`
 	RAGScoreThreshold  float64 `json:"rag_score_threshold"`
 	VADSpeechThreshold float64 `json:"vad_speech_threshold_db"`
+	OpenAIURL          string  `json:"openai_url"`
+	OpenAIModel        string  `json:"openai_model"`
+	AnthropicURL       string  `json:"anthropic_url"`
+	AnthropicModel     string  `json:"anthropic_model"`
 }
 
 // defaultTuning returns sensible defaults matching gateway.json.
@@ -50,6 +57,10 @@ func defaultTuning() tuning {
 		RAGTopK:            3,
 		RAGScoreThreshold:  0.7,
 		VADSpeechThreshold: -30,
+		OpenAIURL:          "https://api.openai.com",
+		OpenAIModel:        "gpt-4.1-nano",
+		AnthropicURL:       "https://api.anthropic.com",
+		AnthropicModel:     "claude-sonnet-4-5",
 	}
 }
 
@@ -88,11 +99,7 @@ func main() {
 	elevenlabsVoiceID := env.Str("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
 	elevenlabsModelID := env.Str("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")
 	openaiAPIKey := env.Str("OPENAI_API_KEY", "")
-	openaiURL := env.Str("OPENAI_URL", "https://api.openai.com")
-	openaiModel := env.Str("OPENAI_MODEL", "gpt-5.2-codex")
 	anthropicAPIKey := env.Str("ANTHROPIC_API_KEY", "")
-	anthropicURL := env.Str("ANTHROPIC_URL", "https://api.anthropic.com")
-	anthropicModel := env.Str("ANTHROPIC_MODEL", "claude-sonnet-4-5")
 
 	// Service orchestrator
 	svcRegistry := orchestrator.NewRegistry(map[string]orchestrator.ServiceMeta{
@@ -111,17 +118,27 @@ func main() {
 	}
 	asrRouter := pipeline.NewASRRouter(asrBackends, "whisper-server")
 
-	// LLM backends
-	llmBackends := map[string]pipeline.LLMChatClient{
-		"ollama": pipeline.NewOllamaLLMClient(ollamaURL, ollamaModel, t.LLMSystemPrompt, t.LLMMaxTokens, t.LLMPoolSize),
-	}
+	// LLM backends (openai-agents-go SDK)
+	llmRouter := pipeline.NewAgentLLM("ollama", t.LLMMaxTokens)
+	llmRouter.Register("ollama", agents.NewOpenAIProvider(agents.OpenAIProviderParams{
+		BaseURL:      param.NewOpt(ollamaURL + "/v1/"),
+		APIKey:       param.NewOpt("ollama"),
+		UseResponses: param.NewOpt(false),
+	}), ollamaModel)
 	if openaiAPIKey != "" {
-		llmBackends["openai"] = pipeline.NewOpenAILLMClient(openaiAPIKey, openaiURL, openaiModel, t.LLMMaxTokens, t.LLMPoolSize)
+		llmRouter.Register("openai", agents.NewOpenAIProvider(agents.OpenAIProviderParams{
+			BaseURL:      param.NewOpt(t.OpenAIURL + "/v1/"),
+			APIKey:       param.NewOpt(openaiAPIKey),
+			UseResponses: param.NewOpt(true),
+		}), t.OpenAIModel)
 	}
 	if anthropicAPIKey != "" {
-		llmBackends["anthropic"] = pipeline.NewAnthropicLLMClient(anthropicAPIKey, anthropicURL, anthropicModel, t.LLMMaxTokens, t.LLMPoolSize)
+		llmRouter.Register("anthropic", agents.NewOpenAIProvider(agents.OpenAIProviderParams{
+			BaseURL:      param.NewOpt(t.AnthropicURL + "/v1/"),
+			APIKey:       param.NewOpt(anthropicAPIKey),
+			UseResponses: param.NewOpt(false),
+		}), t.AnthropicModel)
 	}
-	llmRouter := pipeline.NewLLMRouter(llmBackends, "ollama")
 
 	// TTS backends
 	ttsHTTP := pipeline.NewPooledHTTPClient(t.TTSPoolSize, 30*time.Second)

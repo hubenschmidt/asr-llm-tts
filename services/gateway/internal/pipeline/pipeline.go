@@ -15,7 +15,7 @@ import (
 // Config holds pipeline configuration.
 type Config struct {
 	ASRClient    *ASRRouter
-	LLMClient    *LLMRouter
+	LLMClient    *AgentLLM
 	TTSClient    *TTSRouter
 	VADConfig    audio.VADConfig
 	RAGClient    *RAGClient
@@ -26,10 +26,17 @@ type Config struct {
 	LLMEngine    string
 }
 
+// turn holds one user→assistant exchange for conversation history.
+type turn struct {
+	user      string
+	assistant string
+}
+
 // Pipeline processes a single call session through ASR → LLM → TTS.
 type Pipeline struct {
-	cfg Config
-	vad *audio.VAD
+	cfg     Config
+	vad     *audio.VAD
+	history []turn
 }
 
 // New creates a pipeline for a single call session.
@@ -111,11 +118,17 @@ func (p *Pipeline) runFullPipeline(ctx context.Context, speechAudio []float32, t
 	// RAG — retrieve relevant context (non-fatal on error)
 	ragContext := p.retrieveRAGContext(ctx, transcript)
 
+	// Build input with conversation history for multi-turn context
+	llmInput := p.formatInput(transcript)
+
 	// LLM→TTS sentence pipelining: TTS starts on each sentence while LLM keeps generating
-	ttsLatencyMs, llmResult, err := p.streamLLMWithTTS(ctx, transcript, ragContext, ttsEngine, onEvent)
+	ttsLatencyMs, llmResult, err := p.streamLLMWithTTS(ctx, llmInput, ragContext, ttsEngine, onEvent)
 	if err != nil {
 		return fmt.Errorf("llm+tts: %w", err)
 	}
+
+	// Track conversation turn
+	p.history = append(p.history, turn{user: transcript, assistant: llmResult.Text})
 
 	// Store conversation turn async (fire-and-forget)
 	if p.cfg.CallHistory != nil {
@@ -136,6 +149,19 @@ func (p *Pipeline) runFullPipeline(ctx context.Context, speechAudio []float32, t
 	})
 
 	return nil
+}
+
+// formatInput prepends conversation history to the current message.
+func (p *Pipeline) formatInput(current string) string {
+	if len(p.history) == 0 {
+		return current
+	}
+	var b strings.Builder
+	for _, t := range p.history {
+		fmt.Fprintf(&b, "User: %s\nAssistant: %s\n", t.user, t.assistant)
+	}
+	fmt.Fprintf(&b, "User: %s", current)
+	return b.String()
 }
 
 func (p *Pipeline) retrieveRAGContext(ctx context.Context, transcript string) string {
@@ -169,12 +195,17 @@ func (p *Pipeline) streamLLMWithTTS(ctx context.Context, transcript, ragContext,
 	}()
 
 	// LLM producer — stream content tokens, split at sentence boundaries.
-	// Thinking is separated by Ollama (think:true), so onToken only gets content.
+	// Code blocks (``` fenced) are sent to the frontend but omitted from TTS.
 	var sb sentenceBuffer
+	var cf codeFilter
 
 	llmResult, err := p.cfg.LLMClient.Chat(ctx, transcript, ragContext, p.cfg.SystemPrompt, p.cfg.LLMModel, p.cfg.LLMEngine, func(token string) {
 		onEvent(Event{Type: "llm_token", Token: token})
-		s := sb.Add(token)
+		filtered := cf.Filter(token)
+		if filtered == "" {
+			return
+		}
+		s := sb.Add(filtered)
 		if s != "" {
 			sentenceCh <- s
 		}
