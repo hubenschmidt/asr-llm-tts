@@ -17,6 +17,14 @@
   overflow-y: auto;
   border-right: 1px solid #1a2535;
   background: #0d1019;
+  transition: width 200ms ease, padding 200ms ease;
+}
+
+.sidebar-left.collapsed {
+  width: 0;
+  padding: 0;
+  overflow: hidden;
+  border: none;
 }
 
 .sidebar-left > h2 {
@@ -44,6 +52,38 @@
   overflow-y: auto;
   border-left: 1px solid #1a2535;
   background: #0d1019;
+  transition: width 200ms ease, padding 200ms ease;
+}
+
+.sidebar-right.collapsed {
+  width: 0;
+  padding: 0;
+  overflow: hidden;
+  border: none;
+}
+
+/* === Sidebar toggle buttons === */
+.sidebar-toggle {
+  width: 16px;
+  flex-shrink: 0;
+  background: #0d1019;
+  border: none;
+  border-left: 1px solid #1a2535;
+  border-right: 1px solid #1a2535;
+  color: #4a6880;
+  cursor: pointer;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-family: inherit;
+  transition: color 150ms, background 150ms;
+}
+
+.sidebar-toggle:hover {
+  color: #00b8d4;
+  background: #0f1420;
 }
 
 /* === Model selectors (left sidebar) === */
@@ -499,4 +539,92 @@
   font-size: 9px;
   color: #4a6880;
   white-space: nowrap;
+}
+
+/* === Transcript row (transcript + explain side by side) === */
+.transcript-row {
+  display: flex;
+  gap: 12px;
+}
+
+.transcript-row .transcript-box {
+  flex: 1;
+  min-width: 0;
+}
+
+/* === Explain panel === */
+.explain-panel {
+  width: 480px;
+  flex-shrink: 0;
+  height: 80vh;
+  background: #0a0d15;
+  border: 1px solid #1a2535;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.explain-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid #1a2535;
+  flex-shrink: 0;
+}
+
+.explain-title {
+  font-size: 11px;
+  color: #4a9ec8;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  font-weight: 400;
+}
+
+.explain-close {
+  background: none;
+  border: none;
+  color: #4a6880;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 2px;
+  font-family: inherit;
+  transition: color 150ms;
+}
+
+.explain-close:hover { color: #e74c3c; }
+
+.explain-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #c0c8d8;
+}
+
+/* === Explain icon on agent responses === */
+.explain-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid #1a2535;
+  background: transparent;
+  color: #4a6880;
+  font-size: 10px;
+  cursor: pointer;
+  margin-left: 6px;
+  vertical-align: middle;
+  font-family: inherit;
+  transition: color 150ms, border-color 150ms;
+}
+
+.explain-icon:hover {
+  color: #00b8d4;
+  border-color: #00b8d4;
 }

@@ -24,7 +24,7 @@ hljs.registerLanguage("xml", xml);
 hljs.registerLanguage("sql", sql);
 hljs.registerLanguage("rust", rust);
 
-const marked = new Marked(
+export const marked = new Marked(
   markedHighlight({
     emptyLangClass: "hljs",
     langPrefix: "hljs language-",
@@ -56,6 +56,9 @@ export const TranscriptEntry = (props) => {
         <div class="agent-markdown">
           <strong>Agent: </strong>
           <span innerHTML={marked.parse(props.text || "")} />
+          <Show when={props.onExplain}>
+            <button class="explain-icon" onClick={() => props.onExplain(props.text)} title="Explain this">?</button>
+          </Show>
         </div>
       </Show>
       <Show when={isAgent() && props.thinking}>

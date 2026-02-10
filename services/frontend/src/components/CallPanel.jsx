@@ -76,6 +76,9 @@ export const CallPanel = () => {
   const [downloadingModel, setDownloadingModel] = createSignal("");
   const [downloadProgress, setDownloadProgress] = createSignal(null);
   const [mode, setMode] = createSignal(localStorage.getItem("callMode") || "talk");
+  const [explainText, setExplainText] = createSignal(null);
+  const [leftCollapsed, setLeftCollapsed] = createSignal(false);
+  const [rightCollapsed, setRightCollapsed] = createSignal(false);
 
   const setSttModel = (v) => { _setSttModel(v); localStorage.setItem("sttModel", v); };
 
@@ -421,7 +424,7 @@ export const CallPanel = () => {
 
   const centerProps = {
     transcripts, llmResponse, pendingThinking, isStreaming, isRecording, soundChecking,
-    micLevel, error, loadingLLM, loadingTTS, llmModel, ttsEngine, mode,
+    micLevel, error, loadingLLM, loadingTTS, llmModel, llmEngine, ttsEngine, mode, explainText,
   };
 
   const handleSetMode = (m) => { setMode(m); localStorage.setItem("callMode", m); };
@@ -442,13 +445,21 @@ export const CallPanel = () => {
     resumeRecording,
     processSnippet,
     sendChat: handleSendChat,
+    setExplainText: (text) => setExplainText(text),
+    closeExplain: () => setExplainText(null),
   };
 
   return (
     <div class="layout">
-      <ConfigSidebar config={configProps} on={configHandlers} />
+      <ConfigSidebar config={configProps} on={configHandlers} collapsed={leftCollapsed()} />
+      <button class="sidebar-toggle" onClick={() => setLeftCollapsed((v) => !v)}>
+        {leftCollapsed() ? "\u203A" : "\u2039"}
+      </button>
       <CenterPanel config={centerProps} on={centerHandlers} />
-      <div class="sidebar-right">
+      <button class="sidebar-toggle" onClick={() => setRightCollapsed((v) => !v)}>
+        {rightCollapsed() ? "\u2039" : "\u203A"}
+      </button>
+      <div class={`sidebar-right ${rightCollapsed() ? "collapsed" : ""}`}>
         <MetricsPanel metrics={latestMetrics()} history={metricsHistory()} />
         <div class="model-group" style={{ "margin-top": "12px" }}>
           <label class="label">System Prompt</label>

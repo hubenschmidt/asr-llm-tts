@@ -7,7 +7,7 @@ export const ConfigSidebar = (props) => {
   const { config: c, on } = props;
 
   return (
-    <div class="sidebar-left">
+    <div class={`sidebar-left ${props.collapsed ? "collapsed" : ""}`}>
       <h2>Configuration</h2>
 
       <GPUPanel onUnloadAll={on.unloadAll} />

@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js";
+import { createSignal, onCleanup } from "solid-js";
 
 const rmsLevel = (samples) => Math.sqrt(samples.reduce((sum, s) => sum + s * s, 0) / samples.length);
 
@@ -12,6 +12,10 @@ export const useAudioStream = (opts) => {
   let worklet = null;
   let audioCtx = null;
   let sendingAudio = true;
+
+  const handleUnload = () => stop();
+  window.addEventListener("beforeunload", handleUnload);
+  onCleanup(() => window.removeEventListener("beforeunload", handleUnload));
 
   const connect = (mode) => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
