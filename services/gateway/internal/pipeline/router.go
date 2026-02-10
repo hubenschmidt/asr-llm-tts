@@ -17,12 +17,10 @@ func NewRouter[T any](backends map[string]T, fallback string) *Router[T] {
 
 // Route returns the backend for the given engine name, falling back to the default.
 func (r *Router[T]) Route(engine string) (T, error) {
-	backend, ok := r.backends[engine]
-	if ok {
+	if backend, ok := r.backends[engine]; ok {
 		return backend, nil
 	}
-	backend, ok = r.backends[r.fallback]
-	if ok {
+	if backend, ok := r.backends[r.fallback]; ok {
 		return backend, nil
 	}
 	var zero T

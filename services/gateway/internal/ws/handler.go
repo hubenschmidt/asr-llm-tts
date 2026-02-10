@@ -145,12 +145,7 @@ func (h *Handler) runSession(conn *websocket.Conn) {
 
 	sendEvent := newEventSender(conn)
 	processMessages(ctx, conn, pipe, codec, sampleRate, ttsEngine, sttEngine, sendEvent, mode)
-
-	if mode != "snippet" && mode != "text" {
-		if err = pipe.Flush(ctx, ttsEngine, sttEngine, sendEvent); err != nil {
-			slog.Error("flush", "error", err)
-		}
-	}
+	flushIfNeeded(ctx, mode, pipe, ttsEngine, sttEngine, sendEvent)
 
 	slog.Info("call ended")
 }
@@ -165,33 +160,41 @@ func processMessages(ctx context.Context, conn *websocket.Conn, pipe *pipeline.P
 			slog.Info("connection closed", "error", err)
 			return
 		}
+		handleOneMessage(ctx, msgType, data, pipe, codec, sampleRate, ttsEngine, sttEngine, sendEvent, mode)
+	}
+}
 
-		if msgType == websocket.TextMessage {
-			handleTextFrame(ctx, data, pipe, ttsEngine, sttEngine, sendEvent, mode)
-			continue
-		}
-
-		if msgType != websocket.BinaryMessage {
-			continue
-		}
-
-		if mode == "text" {
-			continue
-		}
-
-		if mode == "snippet" {
-			if err := pipe.ProcessChunkNoVAD(data, codec, sampleRate); err != nil {
-				slog.Error("buffer chunk", "error", err)
-				sendEvent(pipeline.Event{Type: "error", Text: err.Error()})
-			}
-			continue
-		}
-
-		// talk mode (default): VAD processing
-		if err = pipe.ProcessChunk(ctx, data, codec, sampleRate, ttsEngine, sttEngine, sendEvent); err != nil {
-			slog.Error("process chunk", "error", err)
+func handleOneMessage(ctx context.Context, msgType int, data []byte, pipe *pipeline.Pipeline, codec audio.Codec, sampleRate int, ttsEngine, sttEngine string, sendEvent pipeline.EventCallback, mode string) {
+	if msgType == websocket.TextMessage {
+		handleTextFrame(ctx, data, pipe, ttsEngine, sttEngine, sendEvent, mode)
+		return
+	}
+	if msgType != websocket.BinaryMessage {
+		return
+	}
+	if mode == "text" {
+		return
+	}
+	if mode == "snippet" {
+		if err := pipe.ProcessChunkNoVAD(data, codec, sampleRate); err != nil {
+			slog.Error("buffer chunk", "error", err)
 			sendEvent(pipeline.Event{Type: "error", Text: err.Error()})
 		}
+		return
+	}
+	// talk mode (default): VAD processing
+	if err := pipe.ProcessChunk(ctx, data, codec, sampleRate, ttsEngine, sttEngine, sendEvent); err != nil {
+		slog.Error("process chunk", "error", err)
+		sendEvent(pipeline.Event{Type: "error", Text: err.Error()})
+	}
+}
+
+func flushIfNeeded(ctx context.Context, mode string, pipe *pipeline.Pipeline, ttsEngine, sttEngine string, sendEvent pipeline.EventCallback) {
+	if mode == "snippet" || mode == "text" {
+		return
+	}
+	if err := pipe.Flush(ctx, ttsEngine, sttEngine, sendEvent); err != nil {
+		slog.Error("flush", "error", err)
 	}
 }
 

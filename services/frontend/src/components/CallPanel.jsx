@@ -41,6 +41,11 @@ const CLOUD_MODELS = {
   anthropic: ["claude-opus-4-6", "claude-sonnet-4-5", "claude-haiku-4-5"],
 };
 
+const MODEL_ENGINE_MAP = Object.entries(CLOUD_MODELS).reduce((map, [engine, models]) => {
+  models.forEach((m) => { map[m] = engine; });
+  return map;
+}, {});
+
 export const CallPanel = () => {
   const [ttsEngine, _setTtsEngine] = createSignal(localStorage.getItem("ttsEngine") || "");
   const [sttEngine, setSttEngine] = createSignal("");
@@ -61,12 +66,7 @@ export const CallPanel = () => {
     return groups;
   };
 
-  const modelToEngine = (model) => {
-    for (const [engine, models] of Object.entries(CLOUD_MODELS)) {
-      if (models.includes(model)) return engine;
-    }
-    return "ollama";
-  };
+  const modelToEngine = (model) => MODEL_ENGINE_MAP[model] || "ollama";
   const [loadingSTT, setLoadingSTT] = createSignal(false);
   const [loadingLLM, setLoadingLLM] = createSignal(false);
   const [loadingTTS, setLoadingTTS] = createSignal(false);
@@ -123,8 +123,7 @@ export const CallPanel = () => {
       const buf = new Float32Array(analyser.fftSize);
       const pump = () => {
         analyser.getFloatTimeDomainData(buf);
-        let sum = 0;
-        for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+        const sum = buf.reduce((acc, s) => acc + s * s, 0);
         setMicLevel(Math.sqrt(sum / buf.length));
         scRaf = requestAnimationFrame(pump);
       };

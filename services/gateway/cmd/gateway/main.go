@@ -111,52 +111,9 @@ func main() {
 	})
 	svcMgr := orchestrator.NewHTTPControlManager(svcRegistry)
 
-	// ASR backends
-	asrBackends := map[string]pipeline.ASRTranscriber{}
-	if whisperServerURL != "" {
-		asrBackends["whisper-server"] = pipeline.NewASRClient(whisperServerURL, t.ASRPoolSize)
-	}
-	asrRouter := pipeline.NewASRRouter(asrBackends, "whisper-server")
-
-	// LLM backends (openai-agents-go SDK)
-	llmRouter := pipeline.NewAgentLLM("ollama", t.LLMMaxTokens)
-	llmRouter.Register("ollama", agents.NewOpenAIProvider(agents.OpenAIProviderParams{
-		BaseURL:      param.NewOpt(ollamaURL + "/v1/"),
-		APIKey:       param.NewOpt("ollama"),
-		UseResponses: param.NewOpt(false),
-	}), ollamaModel)
-	if openaiAPIKey != "" {
-		llmRouter.Register("openai", agents.NewOpenAIProvider(agents.OpenAIProviderParams{
-			BaseURL:      param.NewOpt(t.OpenAIURL + "/v1/"),
-			APIKey:       param.NewOpt(openaiAPIKey),
-			UseResponses: param.NewOpt(true),
-		}), t.OpenAIModel)
-	}
-	if anthropicAPIKey != "" {
-		llmRouter.Register("anthropic", agents.NewOpenAIProvider(agents.OpenAIProviderParams{
-			BaseURL:      param.NewOpt(t.AnthropicURL + "/v1/"),
-			APIKey:       param.NewOpt(anthropicAPIKey),
-			UseResponses: param.NewOpt(false),
-		}), t.AnthropicModel)
-	}
-
-	// TTS backends
-	ttsHTTP := pipeline.NewPooledHTTPClient(t.TTSPoolSize, 30*time.Second)
-	ttsBackends := map[string]pipeline.TTSSynthesizer{
-		"fast":    pipeline.NewPiperSynthesizer(piperURL, "en_US-lessac-low", ttsHTTP),
-		"quality": pipeline.NewPiperSynthesizer(piperURL, "en_US-lessac-medium", ttsHTTP),
-		"high":    pipeline.NewPiperSynthesizer(piperURL, "en_US-lessac-high", ttsHTTP),
-	}
-	if kokoroURL != "" {
-		ttsBackends["kokoro"] = pipeline.NewOpenAISynthesizer(kokoroURL, "kokoro", "af_heart", ttsHTTP)
-	}
-	if melottsURL != "" {
-		ttsBackends["melotts"] = pipeline.NewMeloSynthesizer(melottsURL, ttsHTTP)
-	}
-	if elevenlabsAPIKey != "" {
-		ttsBackends["elevenlabs"] = pipeline.NewElevenLabsSynthesizer(elevenlabsAPIKey, elevenlabsVoiceID, elevenlabsModelID, ttsHTTP)
-	}
-	ttsClient := pipeline.NewTTSRouter(ttsBackends, "fast")
+	asrRouter := initASR(whisperServerURL, t.ASRPoolSize)
+	llmRouter := initLLM(ollamaURL, ollamaModel, openaiAPIKey, anthropicAPIKey, t)
+	ttsClient := initTTS(piperURL, kokoroURL, melottsURL, elevenlabsAPIKey, elevenlabsVoiceID, elevenlabsModelID, t.TTSPoolSize)
 
 	// RAG + call history (nil when Qdrant not configured)
 	ragClient, callHistory := initRAG(ollamaURL, qdrantURL, t)
@@ -258,4 +215,55 @@ func initRAG(ollamaURL, qdrantURL string, t tuning) (*pipeline.RAGClient, *pipel
 	callHistory := pipeline.NewCallHistoryClient(embedClient, qdrantClient, "call_history")
 
 	return ragClient, callHistory
+}
+
+func initASR(whisperServerURL string, poolSize int) *pipeline.ASRRouter {
+	backends := map[string]pipeline.ASRTranscriber{}
+	if whisperServerURL != "" {
+		backends["whisper-server"] = pipeline.NewASRClient(whisperServerURL, poolSize)
+	}
+	return pipeline.NewASRRouter(backends, "whisper-server")
+}
+
+func initLLM(ollamaURL, ollamaModel, openaiAPIKey, anthropicAPIKey string, t tuning) *pipeline.AgentLLM {
+	router := pipeline.NewAgentLLM("ollama", t.LLMMaxTokens)
+	router.Register("ollama", agents.NewOpenAIProvider(agents.OpenAIProviderParams{
+		BaseURL:      param.NewOpt(ollamaURL + "/v1/"),
+		APIKey:       param.NewOpt("ollama"),
+		UseResponses: param.NewOpt(false),
+	}), ollamaModel)
+	if openaiAPIKey != "" {
+		router.Register("openai", agents.NewOpenAIProvider(agents.OpenAIProviderParams{
+			BaseURL:      param.NewOpt(t.OpenAIURL + "/v1/"),
+			APIKey:       param.NewOpt(openaiAPIKey),
+			UseResponses: param.NewOpt(true),
+		}), t.OpenAIModel)
+	}
+	if anthropicAPIKey != "" {
+		router.Register("anthropic", agents.NewOpenAIProvider(agents.OpenAIProviderParams{
+			BaseURL:      param.NewOpt(t.AnthropicURL + "/v1/"),
+			APIKey:       param.NewOpt(anthropicAPIKey),
+			UseResponses: param.NewOpt(false),
+		}), t.AnthropicModel)
+	}
+	return router
+}
+
+func initTTS(piperURL, kokoroURL, melottsURL, elevenlabsAPIKey, elevenlabsVoiceID, elevenlabsModelID string, poolSize int) *pipeline.TTSRouter {
+	httpClient := pipeline.NewPooledHTTPClient(poolSize, 30*time.Second)
+	backends := map[string]pipeline.TTSSynthesizer{
+		"fast":    pipeline.NewPiperSynthesizer(piperURL, "en_US-lessac-low", httpClient),
+		"quality": pipeline.NewPiperSynthesizer(piperURL, "en_US-lessac-medium", httpClient),
+		"high":    pipeline.NewPiperSynthesizer(piperURL, "en_US-lessac-high", httpClient),
+	}
+	if kokoroURL != "" {
+		backends["kokoro"] = pipeline.NewOpenAISynthesizer(kokoroURL, "kokoro", "af_heart", httpClient)
+	}
+	if melottsURL != "" {
+		backends["melotts"] = pipeline.NewMeloSynthesizer(melottsURL, httpClient)
+	}
+	if elevenlabsAPIKey != "" {
+		backends["elevenlabs"] = pipeline.NewElevenLabsSynthesizer(elevenlabsAPIKey, elevenlabsVoiceID, elevenlabsModelID, httpClient)
+	}
+	return pipeline.NewTTSRouter(backends, "fast")
 }

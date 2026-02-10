@@ -106,69 +106,37 @@ export const CenterPanel = (props) => {
           {c.soundChecking() ? "Stop Check" : "Sound Check"}
         </button>
 
-        <Show when={c.mode() === "talk"}>
-          <Show
-            when={!c.isStreaming()}
-            fallback={
-              <button onClick={on.stop} class="btn btn-danger">
-                Stop
-              </button>
-            }
-          >
-            <button
-              onClick={on.startMic}
-              class="btn"
-              disabled={!enginesReady()}
-            >
-              {talkBtnLabel(c.loadingLLM(), c.loadingTTS())}
-            </button>
-            <button
-              onClick={() => fileInput.click()}
-              class="btn btn-secondary"
-              disabled={!enginesReady()}
-            >
-              Upload Audio
-            </button>
-            <input
-              ref={fileInput}
-              type="file"
-              accept="audio/*"
-              onChange={handleFileSelect}
-              style={{ display: "none" }}
-            />
-          </Show>
+        <Show when={c.mode() === "talk" && c.isStreaming()}>
+          <button onClick={on.stop} class="btn btn-danger">Stop</button>
         </Show>
 
-        <Show when={c.mode() === "snippet"}>
-          <Show
-            when={c.isStreaming()}
-            fallback={
-              <button
-                onClick={on.startSnippet}
-                class="btn"
-                disabled={!enginesReady()}
-              >
-                Start Session
-              </button>
-            }
+        <Show when={c.mode() === "talk" && !c.isStreaming()}>
+          <button onClick={on.startMic} class="btn" disabled={!enginesReady()}>
+            {talkBtnLabel(c.loadingLLM(), c.loadingTTS())}
+          </button>
+          <button onClick={() => fileInput.click()} class="btn btn-secondary" disabled={!enginesReady()}>
+            Upload Audio
+          </button>
+          <input ref={fileInput} type="file" accept="audio/*" onChange={handleFileSelect} style={{ display: "none" }} />
+        </Show>
+
+        <Show when={c.mode() === "snippet" && !c.isStreaming()}>
+          <button onClick={on.startSnippet} class="btn" disabled={!enginesReady()}>
+            Start Session
+          </button>
+        </Show>
+
+        <Show when={c.mode() === "snippet" && c.isStreaming()}>
+          <button
+            onClick={c.isRecording() ? on.pauseRecording : on.resumeRecording}
+            class={`btn ${c.isRecording() ? "btn-danger" : ""}`}
           >
-            <button
-              onClick={c.isRecording() ? on.pauseRecording : on.resumeRecording}
-              class={`btn ${c.isRecording() ? "btn-danger" : ""}`}
-            >
-              {c.isRecording() ? "Pause" : "Record"}
-            </button>
-            <button
-              onClick={on.processSnippet}
-              class="btn btn-success"
-              disabled={c.isRecording()}
-            >
-              Process
-            </button>
-            <button onClick={on.stop} class="btn btn-secondary">
-              End Session
-            </button>
-          </Show>
+            {c.isRecording() ? "Pause" : "Record"}
+          </button>
+          <button onClick={on.processSnippet} class="btn btn-success" disabled={c.isRecording()}>
+            Process
+          </button>
+          <button onClick={on.stop} class="btn btn-secondary">End Session</button>
         </Show>
       </div>
     </div>
