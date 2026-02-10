@@ -1,3 +1,5 @@
+@import "highlight.js/styles/github-dark.css";
+
 /* === Three-panel layout === */
 .layout {
   display: flex;
@@ -252,6 +254,11 @@
   font-family: "Fira Code", "Cascadia Code", "JetBrains Mono", monospace;
   font-size: 12px;
 }
+.agent-markdown pre code.hljs {
+  background: transparent;
+  padding: 0;
+}
+
 .agent-markdown :not(pre) > code {
   background: #0b0e17;
   padding: 1px 5px;
