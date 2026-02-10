@@ -58,6 +58,12 @@ type callMetadata struct {
 	SystemPrompt string `json:"system_prompt"`
 	LLMModel     string `json:"llm_model"`
 	LLMEngine    string `json:"llm_engine"`
+	Mode         string `json:"mode"`
+}
+
+// wsAction is a text frame sent during a snippet session.
+type wsAction struct {
+	Action string `json:"action"`
 }
 
 // ServeHTTP upgrades the connection and runs the call session.
@@ -120,7 +126,8 @@ func (h *Handler) runSession(conn *websocket.Conn) {
 		llmEngine = "ollama"
 	}
 
-	slog.Info("call started", "session_id", sessionID, "codec", codec, "sample_rate", sampleRate, "tts_engine", ttsEngine, "stt_engine", sttEngine, "llm_engine", llmEngine)
+	mode := meta.Mode
+	slog.Info("call started", "session_id", sessionID, "codec", codec, "sample_rate", sampleRate, "tts_engine", ttsEngine, "stt_engine", sttEngine, "llm_engine", llmEngine, "mode", mode)
 
 	pipe := pipeline.New(pipeline.Config{
 		ASRClient:    h.cfg.ASRClient,
@@ -136,19 +143,21 @@ func (h *Handler) runSession(conn *websocket.Conn) {
 	})
 
 	sendEvent := newEventSender(conn)
-	processMessages(ctx, conn, pipe, codec, sampleRate, ttsEngine, sttEngine, sendEvent)
+	processMessages(ctx, conn, pipe, codec, sampleRate, ttsEngine, sttEngine, sendEvent, mode)
 
-	if err = pipe.Flush(ctx, ttsEngine, sttEngine, sendEvent); err != nil {
-		slog.Error("flush", "error", err)
+	if mode != "snippet" {
+		if err = pipe.Flush(ctx, ttsEngine, sttEngine, sendEvent); err != nil {
+			slog.Error("flush", "error", err)
+		}
 	}
 
 	slog.Info("call ended")
 }
 
-// processMessages reads binary audio frames from the WebSocket in a loop.
-// The first frame (text) was already consumed as callMetadata by runSession;
-// all subsequent binary frames are raw audio chunks fed into the pipeline.
-func processMessages(ctx context.Context, conn *websocket.Conn, pipe *pipeline.Pipeline, codec audio.Codec, sampleRate int, ttsEngine, sttEngine string, sendEvent pipeline.EventCallback) {
+// processMessages reads frames from the WebSocket in a loop.
+// In talk mode (default): binary frames are VAD-processed audio chunks.
+// In snippet mode: binary frames buffer without VAD; text {"action":"process"} triggers the pipeline.
+func processMessages(ctx context.Context, conn *websocket.Conn, pipe *pipeline.Pipeline, codec audio.Codec, sampleRate int, ttsEngine, sttEngine string, sendEvent pipeline.EventCallback, mode string) {
 	for {
 		msgType, data, err := conn.ReadMessage()
 		if err != nil {
@@ -156,6 +165,12 @@ func processMessages(ctx context.Context, conn *websocket.Conn, pipe *pipeline.P
 			return
 		}
 
+		if mode == "snippet" {
+			processSnippetFrame(ctx, msgType, data, pipe, codec, sampleRate, ttsEngine, sttEngine, sendEvent)
+			continue
+		}
+
+		// Talk mode: non-binary ends session
 		if msgType != websocket.BinaryMessage {
 			return
 		}
@@ -164,6 +179,33 @@ func processMessages(ctx context.Context, conn *websocket.Conn, pipe *pipeline.P
 			slog.Error("process chunk", "error", err)
 			sendEvent(pipeline.Event{Type: "error", Text: err.Error()})
 		}
+	}
+}
+
+func processSnippetFrame(ctx context.Context, msgType int, data []byte, pipe *pipeline.Pipeline, codec audio.Codec, sampleRate int, ttsEngine, sttEngine string, sendEvent pipeline.EventCallback) {
+	if msgType == websocket.BinaryMessage {
+		if err := pipe.ProcessChunkNoVAD(data, codec, sampleRate); err != nil {
+			slog.Error("buffer chunk", "error", err)
+			sendEvent(pipeline.Event{Type: "error", Text: err.Error()})
+		}
+		return
+	}
+
+	if msgType != websocket.TextMessage {
+		return
+	}
+
+	var act wsAction
+	if err := json.Unmarshal(data, &act); err != nil {
+		return
+	}
+	if act.Action != "process" {
+		return
+	}
+
+	if err := pipe.ProcessBuffered(ctx, ttsEngine, sttEngine, sendEvent); err != nil {
+		slog.Error("process buffered", "error", err)
+		sendEvent(pipeline.Event{Type: "error", Text: err.Error()})
 	}
 }
 

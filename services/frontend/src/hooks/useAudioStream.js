@@ -6,29 +6,31 @@ const toPCM16 = (float32) => Int16Array.from(float32, (s) => Math.max(-32768, Ma
 
 export const useAudioStream = (opts) => {
   const [isStreaming, setIsStreaming] = createSignal(false);
+  const [isRecording, setIsRecording] = createSignal(false);
   let ws = null;
   let mediaStream = null;
   let worklet = null;
   let audioCtx = null;
+  let sendingAudio = true;
 
-  const connect = () => {
+  const connect = (mode) => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(`${protocol}//${window.location.host}/ws/call`);
     socket.binaryType = "arraybuffer";
 
     socket.onopen = () => {
       const sampleRate = audioCtx?.sampleRate ?? 48000;
-      socket.send(
-        JSON.stringify({
-          codec: "pcm",
-          sample_rate: sampleRate,
-          tts_engine: opts.ttsEngine(),
-          stt_engine: opts.sttEngine(),
-          system_prompt: opts.systemPrompt(),
-          llm_model: opts.llmModel(),
-          llm_engine: opts.llmEngine(),
-        }),
-      );
+      const meta = {
+        codec: "pcm",
+        sample_rate: sampleRate,
+        tts_engine: opts.ttsEngine(),
+        stt_engine: opts.sttEngine(),
+        system_prompt: opts.systemPrompt(),
+        llm_model: opts.llmModel(),
+        llm_engine: opts.llmEngine(),
+      };
+      if (mode) meta.mode = mode;
+      socket.send(JSON.stringify(meta));
     };
 
     socket.onmessage = (ev) => {
@@ -61,35 +63,61 @@ export const useAudioStream = (opts) => {
     return socket;
   };
 
-  const startMic = async () => {
+  const setupMic = async (socket) => {
+    await audioCtx.audioWorklet.addModule("/pcm-sender.js");
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, autoGainControl: true, noiseSuppression: true },
+    });
+    mediaStream = stream;
+
+    const source = audioCtx.createMediaStreamSource(stream);
+    const node = new AudioWorkletNode(audioCtx, "pcm-sender");
+    worklet = node;
+
+    node.port.onmessage = (ev) => {
+      const float32 = ev.data;
+      if (!sendingAudio) return;
+      opts.onLevel?.(rmsLevel(float32));
+      if (socket.readyState !== WebSocket.OPEN) return;
+      socket.send(toPCM16(float32).buffer);
+    };
+
+    source.connect(node);
+    node.connect(audioCtx.destination);
+  };
+
+  const startWithMic = async (mode) => {
     try {
       audioCtx = new AudioContext();
-      const socket = connect();
-
-      await audioCtx.audioWorklet.addModule("/pcm-sender.js");
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, autoGainControl: true, noiseSuppression: true },
-      });
-      mediaStream = stream;
-
-      const source = audioCtx.createMediaStreamSource(stream);
-      const node = new AudioWorkletNode(audioCtx, "pcm-sender");
-      worklet = node;
-
-      node.port.onmessage = (ev) => {
-        const float32 = ev.data;
-        opts.onLevel?.(rmsLevel(float32));
-        if (socket.readyState !== WebSocket.OPEN) return;
-        socket.send(toPCM16(float32).buffer);
-      };
-
-      source.connect(node);
-      node.connect(audioCtx.destination);
+      sendingAudio = true;
+      const socket = connect(mode);
+      await setupMic(socket);
       setIsStreaming(true);
+      setIsRecording(true);
     } catch (err) {
       opts.onError(`Mic start failed: ${err instanceof Error ? err.message : err}`);
     }
+  };
+
+  const startMic = () => startWithMic();
+
+  const startSnippet = () => startWithMic("snippet");
+
+  const pauseRecording = () => {
+    sendingAudio = false;
+    setIsRecording(false);
+    opts.onLevel?.(0);
+  };
+
+  const resumeRecording = () => {
+    sendingAudio = true;
+    setIsRecording(true);
+  };
+
+  const processSnippet = () => {
+    if (ws?.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ action: "process" }));
   };
 
   const startFile = async (file) => {
@@ -132,8 +160,10 @@ export const useAudioStream = (opts) => {
     worklet = null;
     audioCtx = null;
     ws = null;
+    sendingAudio = true;
     setIsStreaming(false);
+    setIsRecording(false);
   };
 
-  return { isStreaming, startMic, startFile, stop };
+  return { isStreaming, isRecording, startMic, startSnippet, pauseRecording, resumeRecording, processSnippet, startFile, stop };
 };

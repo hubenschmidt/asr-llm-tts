@@ -147,6 +147,38 @@
 
 .btn-danger:hover { background: #e74c3c22; }
 
+.btn-success {
+  border-color: #2ecc71;
+  color: #2ecc71;
+}
+
+.btn-success:hover { background: #2ecc7122; }
+.btn-success:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.btn-sm {
+  padding: 4px 12px;
+  font-size: 11px;
+}
+
+/* === Mode toggle === */
+.mode-toggle {
+  display: flex;
+  gap: 2px;
+  margin-right: 8px;
+  border: 1px solid #1a2535;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.mode-toggle .btn {
+  border: none;
+  border-radius: 0;
+}
+
+.mode-toggle .btn-secondary {
+  border: none;
+}
+
 /* === System prompt (left sidebar) === */
 .prompt {
   width: 100%;

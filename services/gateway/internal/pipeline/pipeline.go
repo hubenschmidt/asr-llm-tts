@@ -34,9 +34,10 @@ type turn struct {
 
 // Pipeline processes a single call session through ASR → LLM → TTS.
 type Pipeline struct {
-	cfg     Config
-	vad     *audio.VAD
-	history []turn
+	cfg        Config
+	vad        *audio.VAD
+	history    []turn
+	snippetBuf []float32
 }
 
 // New creates a pipeline for a single call session.
@@ -82,6 +83,33 @@ func (p *Pipeline) ProcessChunk(ctx context.Context, data []byte, codec audio.Co
 
 	metrics.SpeechSegments.Inc()
 	return p.runFullPipeline(ctx, result.Audio, ttsEngine, sttEngine, onEvent)
+}
+
+// ProcessChunkNoVAD decodes and resamples audio, appending to the snippet buffer
+// without VAD processing. Used in snippet mode.
+func (p *Pipeline) ProcessChunkNoVAD(data []byte, codec audio.Codec, sampleRate int) error {
+	metrics.AudioChunks.Inc()
+
+	samples, srcRate, err := audio.Decode(data, codec, sampleRate)
+	if err != nil {
+		return fmt.Errorf("decode: %w", err)
+	}
+
+	resampled := audio.Resample(samples, srcRate, 16000)
+	p.snippetBuf = append(p.snippetBuf, resampled...)
+	return nil
+}
+
+// ProcessBuffered runs the full pipeline on accumulated snippet audio, then clears the buffer.
+func (p *Pipeline) ProcessBuffered(ctx context.Context, ttsEngine, sttEngine string, onEvent EventCallback) error {
+	if len(p.snippetBuf) == 0 {
+		return nil
+	}
+
+	buf := p.snippetBuf
+	p.snippetBuf = nil
+	metrics.SpeechSegments.Inc()
+	return p.runFullPipeline(ctx, buf, ttsEngine, sttEngine, onEvent)
 }
 
 // Flush processes any remaining buffered audio in the VAD.

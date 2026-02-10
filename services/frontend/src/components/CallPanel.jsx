@@ -67,6 +67,7 @@ export const CallPanel = () => {
   const [sttModel, _setSttModel] = createSignal(localStorage.getItem("sttModel") || "");
   const [downloadingModel, setDownloadingModel] = createSignal("");
   const [downloadProgress, setDownloadProgress] = createSignal(null);
+  const [mode, setMode] = createSignal(localStorage.getItem("callMode") || "talk");
 
   const setSttModel = (v) => { _setSttModel(v); localStorage.setItem("sttModel", v); };
 
@@ -221,7 +222,7 @@ export const CallPanel = () => {
     });
   };
 
-  const { isStreaming, startMic, startFile, stop } = useAudioStream({
+  const { isStreaming, isRecording, startMic, startSnippet, pauseRecording, resumeRecording, processSnippet, startFile, stop } = useAudioStream({
     ttsEngine,
     sttEngine,
     systemPrompt,
@@ -402,15 +403,22 @@ export const CallPanel = () => {
   };
 
   const centerProps = {
-    transcripts, llmResponse, pendingThinking, isStreaming, soundChecking,
-    micLevel, error, loadingLLM, loadingTTS, llmModel, ttsEngine,
+    transcripts, llmResponse, pendingThinking, isStreaming, isRecording, soundChecking,
+    micLevel, error, loadingLLM, loadingTTS, llmModel, ttsEngine, mode,
   };
+
+  const handleSetMode = (m) => { setMode(m); localStorage.setItem("callMode", m); };
 
   const centerHandlers = {
     toggleSoundCheck,
     stop,
     startMic: () => { if (soundChecking()) stopSoundCheck(); startMic(); },
     startFile,
+    setMode: handleSetMode,
+    startSnippet: () => { if (soundChecking()) stopSoundCheck(); startSnippet(); },
+    pauseRecording,
+    resumeRecording,
+    processSnippet,
   };
 
   return (
