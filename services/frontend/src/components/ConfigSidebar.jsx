@@ -207,17 +207,6 @@ export const ConfigSidebar = (props) => {
         </div>
       </div>
 
-      <div class="sidebar-section">
-        <div class="sidebar-section-label">System Prompt</div>
-        <textarea
-          value={c.systemPrompt()}
-          onInput={on.systemPromptChange}
-          class="prompt"
-          disabled={c.isStreaming()}
-          rows={4}
-          placeholder="System prompt..."
-        />
-      </div>
     </div>
   );
 };

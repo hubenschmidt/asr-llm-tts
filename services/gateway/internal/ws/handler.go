@@ -61,9 +61,10 @@ type callMetadata struct {
 	Mode         string `json:"mode"`
 }
 
-// wsAction is a text frame sent during a snippet session.
+// wsAction is a text frame sent during a session (chat message, snippet process, etc).
 type wsAction struct {
-	Action string `json:"action"`
+	Action  string `json:"action"`
+	Message string `json:"message,omitempty"`
 }
 
 // ServeHTTP upgrades the connection and runs the call session.
@@ -145,7 +146,7 @@ func (h *Handler) runSession(conn *websocket.Conn) {
 	sendEvent := newEventSender(conn)
 	processMessages(ctx, conn, pipe, codec, sampleRate, ttsEngine, sttEngine, sendEvent, mode)
 
-	if mode != "snippet" {
+	if mode != "snippet" && mode != "text" {
 		if err = pipe.Flush(ctx, ttsEngine, sttEngine, sendEvent); err != nil {
 			slog.Error("flush", "error", err)
 		}
@@ -155,8 +156,8 @@ func (h *Handler) runSession(conn *websocket.Conn) {
 }
 
 // processMessages reads frames from the WebSocket in a loop.
-// In talk mode (default): binary frames are VAD-processed audio chunks.
-// In snippet mode: binary frames buffer without VAD; text {"action":"process"} triggers the pipeline.
+// Text frames carry actions (chat, process) and are handled in all modes.
+// Binary frames are mode-specific: talk=VAD, snippet=buffer, text=ignored.
 func processMessages(ctx context.Context, conn *websocket.Conn, pipe *pipeline.Pipeline, codec audio.Codec, sampleRate int, ttsEngine, sttEngine string, sendEvent pipeline.EventCallback, mode string) {
 	for {
 		msgType, data, err := conn.ReadMessage()
@@ -165,16 +166,28 @@ func processMessages(ctx context.Context, conn *websocket.Conn, pipe *pipeline.P
 			return
 		}
 
-		if mode == "snippet" {
-			processSnippetFrame(ctx, msgType, data, pipe, codec, sampleRate, ttsEngine, sttEngine, sendEvent)
+		if msgType == websocket.TextMessage {
+			handleTextFrame(ctx, data, pipe, ttsEngine, sttEngine, sendEvent, mode)
 			continue
 		}
 
-		// Talk mode: non-binary ends session
 		if msgType != websocket.BinaryMessage {
-			return
+			continue
 		}
 
+		if mode == "text" {
+			continue
+		}
+
+		if mode == "snippet" {
+			if err := pipe.ProcessChunkNoVAD(data, codec, sampleRate); err != nil {
+				slog.Error("buffer chunk", "error", err)
+				sendEvent(pipeline.Event{Type: "error", Text: err.Error()})
+			}
+			continue
+		}
+
+		// talk mode (default): VAD processing
 		if err = pipe.ProcessChunk(ctx, data, codec, sampleRate, ttsEngine, sttEngine, sendEvent); err != nil {
 			slog.Error("process chunk", "error", err)
 			sendEvent(pipeline.Event{Type: "error", Text: err.Error()})
@@ -182,30 +195,26 @@ func processMessages(ctx context.Context, conn *websocket.Conn, pipe *pipeline.P
 	}
 }
 
-func processSnippetFrame(ctx context.Context, msgType int, data []byte, pipe *pipeline.Pipeline, codec audio.Codec, sampleRate int, ttsEngine, sttEngine string, sendEvent pipeline.EventCallback) {
-	if msgType == websocket.BinaryMessage {
-		if err := pipe.ProcessChunkNoVAD(data, codec, sampleRate); err != nil {
-			slog.Error("buffer chunk", "error", err)
+func handleTextFrame(ctx context.Context, data []byte, pipe *pipeline.Pipeline, ttsEngine, sttEngine string, sendEvent pipeline.EventCallback, mode string) {
+	var act wsAction
+	if err := json.Unmarshal(data, &act); err != nil {
+		return
+	}
+
+	if act.Action == "chat" {
+		if err := pipe.ProcessTextMessage(ctx, act.Message, sendEvent); err != nil {
+			slog.Error("chat", "error", err)
 			sendEvent(pipeline.Event{Type: "error", Text: err.Error()})
 		}
 		return
 	}
 
-	if msgType != websocket.TextMessage {
+	if act.Action == "process" && mode == "snippet" {
+		if err := pipe.ProcessBuffered(ctx, ttsEngine, sttEngine, sendEvent); err != nil {
+			slog.Error("process buffered", "error", err)
+			sendEvent(pipeline.Event{Type: "error", Text: err.Error()})
+		}
 		return
-	}
-
-	var act wsAction
-	if err := json.Unmarshal(data, &act); err != nil {
-		return
-	}
-	if act.Action != "process" {
-		return
-	}
-
-	if err := pipe.ProcessBuffered(ctx, ttsEngine, sttEngine, sendEvent); err != nil {
-		slog.Error("process buffered", "error", err)
-		sendEvent(pipeline.Event{Type: "error", Text: err.Error()})
 	}
 }
 

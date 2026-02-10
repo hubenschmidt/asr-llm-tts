@@ -1,21 +1,37 @@
-import { Show, For } from "solid-js";
+import { createSignal, createEffect, Show, For } from "solid-js";
 
 import { TranscriptEntry, StreamingEntry, VUMeter, talkBtnLabel } from "./TranscriptWidgets";
 
 export const CenterPanel = (props) => {
   const { config: c, on } = props;
   let fileInput;
+  let transcriptRef;
+  const [chatInput, setChatInput] = createSignal("");
+
+  createEffect(() => {
+    c.transcripts();
+    c.llmResponse();
+    if (transcriptRef) transcriptRef.scrollTop = transcriptRef.scrollHeight;
+  });
 
   const handleFileSelect = (e) => {
     const file = e.target.files?.[0];
     if (file) on.startFile(file);
   };
 
+  const handleChatSubmit = (e) => {
+    e.preventDefault();
+    const text = chatInput().trim();
+    if (!text) return;
+    setChatInput("");
+    on.sendChat(text);
+  };
+
   const enginesReady = () => !c.loadingLLM() && !c.loadingTTS() && c.llmModel() && c.ttsEngine();
 
   return (
     <div class="center-panel">
-      <div class="transcript-box">
+      <div class="transcript-box" ref={transcriptRef}>
         <h3 class="transcript-heading">Transcript</h3>
         <For each={c.transcripts()}>
           {(t) => (
@@ -26,9 +42,24 @@ export const CenterPanel = (props) => {
           <StreamingEntry text={c.llmResponse()} thinking={c.pendingThinking()} />
         </Show>
         <Show when={c.transcripts().length === 0 && !c.llmResponse()}>
-          <p class="transcript-placeholder">Waiting for audio input...</p>
+          <p class="transcript-placeholder">Waiting for input...</p>
         </Show>
       </div>
+
+      <form class="chat-input-bar" onSubmit={handleChatSubmit}>
+        <textarea
+          class="chat-input"
+          placeholder="Type a message..."
+          value={chatInput()}
+          onInput={(e) => setChatInput(e.currentTarget.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleChatSubmit(e); } }}
+          disabled={!c.llmModel()}
+          rows={1}
+        />
+        <button type="submit" class="btn btn-sm" disabled={!chatInput().trim() || !c.llmModel()}>
+          Send
+        </button>
+      </form>
 
       <Show when={c.isStreaming() || c.soundChecking()}>
         <VUMeter level={c.micLevel()} />

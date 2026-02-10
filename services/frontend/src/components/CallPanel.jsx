@@ -20,8 +20,15 @@ import { MetricsPanel } from "./MetricsPanel";
 import { ConfigSidebar } from "./ConfigSidebar";
 import { CenterPanel } from "./CenterPanel";
 
-const DEFAULT_PROMPT =
-  "You are a helpful call center agent. Keep responses concise and conversational.";
+const PROMPT_PRESETS = {
+  general: "You are a helpful call center agent. Keep responses concise and conversational.",
+  algos: `You are an algorithm implementation assistant. When given an algorithm name or problem description:
+1. Implement the solution immediately — do NOT ask clarifying questions
+2. Add clear inline comments explaining each step of the algorithm
+3. Include time and space complexity as a comment at the top
+4. Use clean, idiomatic code in the requested language (default: JavaScript)
+5. Include a brief usage example after the implementation`,
+};
 
 // Only host-managed services that need start/stop via whisper-control.
 // Docker services (piper, kokoro, melotts) are always running.
@@ -37,7 +44,8 @@ const CLOUD_MODELS = {
 export const CallPanel = () => {
   const [ttsEngine, _setTtsEngine] = createSignal(localStorage.getItem("ttsEngine") || "");
   const [sttEngine, setSttEngine] = createSignal("");
-  const [systemPrompt, setSystemPrompt] = createSignal(localStorage.getItem("systemPrompt") || DEFAULT_PROMPT);
+  const [promptPreset, setPromptPreset] = createSignal(localStorage.getItem("promptPreset") || "general");
+  const [systemPrompt, setSystemPrompt] = createSignal(localStorage.getItem("systemPrompt") || PROMPT_PRESETS.general);
   const [llmModel, _setLlmModel] = createSignal("");
   const [llmEngine, _setLlmEngine] = createSignal(localStorage.getItem("llmEngine") || "ollama");
 
@@ -222,7 +230,7 @@ export const CallPanel = () => {
     });
   };
 
-  const { isStreaming, isRecording, startMic, startSnippet, pauseRecording, resumeRecording, processSnippet, startFile, stop } = useAudioStream({
+  const { isStreaming, isRecording, startMic, startSnippet, pauseRecording, resumeRecording, processSnippet, startFile, stop, sendChat } = useAudioStream({
     ttsEngine,
     sttEngine,
     systemPrompt,
@@ -379,10 +387,18 @@ export const CallPanel = () => {
     localStorage.setItem("systemPrompt", e.currentTarget.value);
   };
 
+  const handlePromptPreset = (name) => {
+    setPromptPreset(name);
+    localStorage.setItem("promptPreset", name);
+    const prompt = PROMPT_PRESETS[name] || PROMPT_PRESETS.general;
+    setSystemPrompt(prompt);
+    localStorage.setItem("systemPrompt", prompt);
+  };
+
   const configProps = {
     sttEngine, sttModel, sttModels, llmEngine, llmModel, llmModels, ttsEngine,
     availableTTS, availableLLMEngines, loadingSTT, loadingLLM, loadingTTS, isStreaming,
-    systemPrompt, serviceStatuses, downloadingModel, downloadProgress,
+    systemPrompt, promptPreset, serviceStatuses, downloadingModel, downloadProgress,
   };
 
   const configHandlers = {
@@ -397,6 +413,7 @@ export const CallPanel = () => {
     unloadTTS: handleUnloadTTS,
     unloadAll: handleUnloadAll,
     systemPromptChange: handleSystemPromptChange,
+    promptPresetChange: handlePromptPreset,
     sttDotColor,
     llmDotColor,
     ttsDotColor,
@@ -409,6 +426,11 @@ export const CallPanel = () => {
 
   const handleSetMode = (m) => { setMode(m); localStorage.setItem("callMode", m); };
 
+  const handleSendChat = (text) => {
+    setTranscripts((prev) => [...prev, { role: "user", text }]);
+    sendChat(text);
+  };
+
   const centerHandlers = {
     toggleSoundCheck,
     stop,
@@ -419,6 +441,7 @@ export const CallPanel = () => {
     pauseRecording,
     resumeRecording,
     processSnippet,
+    sendChat: handleSendChat,
   };
 
   return (
@@ -427,6 +450,33 @@ export const CallPanel = () => {
       <CenterPanel config={centerProps} on={centerHandlers} />
       <div class="sidebar-right">
         <MetricsPanel metrics={latestMetrics()} history={metricsHistory()} />
+        <div class="model-group" style={{ "margin-top": "12px" }}>
+          <label class="label">System Prompt</label>
+          <div class="mode-toggle" style={{ "margin-bottom": "6px" }}>
+            <button
+              class={`btn btn-sm ${promptPreset() === "general" ? "" : "btn-secondary"}`}
+              onClick={() => handlePromptPreset("general")}
+              disabled={isStreaming()}
+            >
+              General
+            </button>
+            <button
+              class={`btn btn-sm ${promptPreset() === "algos" ? "" : "btn-secondary"}`}
+              onClick={() => handlePromptPreset("algos")}
+              disabled={isStreaming()}
+            >
+              Algos
+            </button>
+          </div>
+          <textarea
+            value={systemPrompt()}
+            onInput={handleSystemPromptChange}
+            class="prompt"
+            disabled={isStreaming()}
+            rows={14}
+            placeholder="System prompt..."
+          />
+        </div>
       </div>
     </div>
   );

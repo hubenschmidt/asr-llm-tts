@@ -56,7 +56,7 @@ func defaultTuning() tuning {
 		VectorSize:         768,
 		RAGTopK:            3,
 		RAGScoreThreshold:  0.7,
-		VADSpeechThreshold: -30,
+		VADSpeechThreshold: -25,
 		OpenAIURL:          "https://api.openai.com",
 		OpenAIModel:        "gpt-4.1-nano",
 		AnthropicURL:       "https://api.anthropic.com",

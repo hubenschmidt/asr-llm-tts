@@ -112,6 +112,39 @@ func (p *Pipeline) ProcessBuffered(ctx context.Context, ttsEngine, sttEngine str
 	return p.runFullPipeline(ctx, buf, ttsEngine, sttEngine, onEvent)
 }
 
+// ProcessTextMessage runs LLM-only pipeline for a typed chat message (no ASR, no TTS).
+func (p *Pipeline) ProcessTextMessage(ctx context.Context, message string, onEvent EventCallback) error {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return nil
+	}
+
+	ragContext := p.retrieveRAGContext(ctx, message)
+	llmInput := p.formatInput(message)
+
+	llmResult, err := p.cfg.LLMClient.Chat(ctx, llmInput, ragContext, p.cfg.SystemPrompt, p.cfg.LLMModel, p.cfg.LLMEngine, func(token string) {
+		onEvent(Event{Type: "llm_token", Token: token})
+	})
+	if err != nil {
+		return fmt.Errorf("llm: %w", err)
+	}
+
+	slog.Info("chat_response", "text", llmResult.Text, "llm_ms", llmResult.LatencyMs)
+	onEvent(Event{Type: "llm_done", Text: llmResult.Text, LatencyMs: llmResult.LatencyMs})
+	if llmResult.Thinking != "" {
+		onEvent(Event{Type: "thinking_done", Text: llmResult.Thinking})
+	}
+
+	p.history = append(p.history, turn{user: message, assistant: llmResult.Text})
+
+	if p.cfg.CallHistory != nil {
+		p.cfg.CallHistory.StoreAsync(ctx, p.cfg.SessionID, message, llmResult.Text)
+	}
+
+	onEvent(Event{Type: "metrics", LLMMs: llmResult.LatencyMs})
+	return nil
+}
+
 // Flush processes any remaining buffered audio in the VAD.
 func (p *Pipeline) Flush(ctx context.Context, ttsEngine, sttEngine string, onEvent EventCallback) error {
 	remaining := p.vad.Flush()
@@ -136,7 +169,7 @@ func (p *Pipeline) runFullPipeline(ctx context.Context, speechAudio []float32, t
 	}
 
 	transcript := strings.TrimSpace(asrResult.Text)
-	if transcript == "" {
+	if transcript == "" || isNoiseTranscript(transcript) {
 		return nil
 	}
 
@@ -177,6 +210,35 @@ func (p *Pipeline) runFullPipeline(ctx context.Context, speechAudio []float32, t
 	})
 
 	return nil
+}
+
+// noisePatterns are common ASR hallucinations from background noise.
+var noisePatterns = map[string]bool{
+	"crunching": true, "static": true, "silence": true, "noise": true,
+	"inaudible": true, "unintelligible": true, "background noise": true,
+	"music": true, "typing": true, "breathing": true, "sigh": true,
+	"cough": true, "sneeze": true, "laughter": true, "applause": true,
+	"you": true, "the": true, "a": true, "um": true, "uh": true,
+	"hmm": true, "ah": true, "oh": true, "mhm": true,
+}
+
+// isNoiseTranscript returns true if the ASR output is likely background noise.
+func isNoiseTranscript(text string) bool {
+	// Asterisk-wrapped text like *crunching*, *static*
+	if strings.HasPrefix(text, "*") && strings.HasSuffix(text, "*") {
+		return true
+	}
+	// Bracket-wrapped like [noise], [inaudible]
+	if strings.HasPrefix(text, "[") && strings.HasSuffix(text, "]") {
+		return true
+	}
+	// Parentheses-wrapped like (crunching)
+	if strings.HasPrefix(text, "(") && strings.HasSuffix(text, ")") {
+		return true
+	}
+	// Known noise words (short transcripts only)
+	lower := strings.ToLower(text)
+	return noisePatterns[lower]
 }
 
 // formatInput prepends conversation history to the current message.

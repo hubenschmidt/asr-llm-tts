@@ -115,6 +115,24 @@ export const useAudioStream = (opts) => {
     setIsRecording(true);
   };
 
+  const ensureConnected = () => {
+    if (ws?.readyState === WebSocket.OPEN) return Promise.resolve();
+    return new Promise((resolve) => {
+      const socket = connect("text");
+      const origOpen = socket.onopen;
+      socket.onopen = (ev) => {
+        origOpen?.(ev);
+        setIsStreaming(true);
+        resolve();
+      };
+    });
+  };
+
+  const sendChat = async (text) => {
+    await ensureConnected();
+    ws.send(JSON.stringify({ action: "chat", message: text }));
+  };
+
   const processSnippet = () => {
     if (ws?.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ action: "process" }));
@@ -165,5 +183,5 @@ export const useAudioStream = (opts) => {
     setIsRecording(false);
   };
 
-  return { isStreaming, isRecording, startMic, startSnippet, pauseRecording, resumeRecording, processSnippet, startFile, stop };
+  return { isStreaming, isRecording, startMic, startSnippet, pauseRecording, resumeRecording, processSnippet, startFile, stop, sendChat };
 };
