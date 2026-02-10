@@ -204,6 +204,31 @@
 
 .transcript-line p { margin: 0; }
 
+.agent-markdown { margin: 0; }
+.agent-markdown p { display: inline; }
+.agent-markdown pre {
+  background: #0b0e17;
+  border: 1px solid #1a2535;
+  border-radius: 4px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.agent-markdown code {
+  font-family: "Fira Code", "Cascadia Code", "JetBrains Mono", monospace;
+  font-size: 12px;
+}
+.agent-markdown :not(pre) > code {
+  background: #0b0e17;
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid #1a2535;
+}
+.agent-markdown ul, .agent-markdown ol { margin: 4px 0; padding-left: 20px; }
+.agent-markdown li { margin: 2px 0; }
+
 .thinking-toggle {
   display: inline-block;
   margin-top: 4px;

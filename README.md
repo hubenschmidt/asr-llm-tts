@@ -2,7 +2,7 @@
 
 Real-time voice pipeline for call center automation, built for AMD GPUs via ROCm. Speak into the mic, get a transcription via ASR, a response from an LLM (Ollama), and hear it spoken back via TTS.
 
-![Conversation Demo](spec/screenshots/conversation-demo.png)
+![Conversation Demo](spec/screenshots/demo.png)
 
 ## Pipeline stages
 

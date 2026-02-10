@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/audio"
+	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/env"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/models"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/orchestrator"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/pipeline"
@@ -38,7 +39,7 @@ type tuning struct {
 func defaultTuning() tuning {
 	return tuning{
 		LLMSystemPrompt:    "You are a helpful call center agent. Keep responses concise and conversational.",
-		LLMMaxTokens:       150,
+		LLMMaxTokens:       2048,
 		EmbeddingModel:     "nomic-embed-text",
 		ASRPoolSize:        50,
 		LLMPoolSize:        50,
@@ -68,32 +69,30 @@ func loadTuning(path string) tuning {
 	return t
 }
 
-func envStr(key, fallback string) string {
-	val := os.Getenv(key)
-	if val == "" {
-		return fallback
-	}
-	return val
-}
-
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	t := loadTuning("gateway.json")
 
 	// Deployment env vars — URLs, ports, keys
-	port := envStr("GATEWAY_PORT", "8000")
-	ollamaURL := envStr("OLLAMA_URL", "http://localhost:11434")
-	ollamaModel := envStr("OLLAMA_MODEL", "llama3.2:3b")
-	piperURL := envStr("PIPER_URL", "http://localhost:5100")
-	kokoroURL := envStr("KOKORO_URL", "")
-	melottsURL := envStr("MELOTTS_URL", "")
-	whisperServerURL := envStr("WHISPER_SERVER_URL", "")
-	whisperControlURL := envStr("WHISPER_CONTROL_URL", "")
-	qdrantURL := envStr("QDRANT_URL", "")
-	elevenlabsAPIKey := envStr("ELEVENLABS_API_KEY", "")
-	elevenlabsVoiceID := envStr("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
-	elevenlabsModelID := envStr("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")
+	port := env.Str("GATEWAY_PORT", "8000")
+	ollamaURL := env.Str("OLLAMA_URL", "http://localhost:11434")
+	ollamaModel := env.Str("OLLAMA_MODEL", "llama3.2:3b")
+	piperURL := env.Str("PIPER_URL", "http://localhost:5100")
+	kokoroURL := env.Str("KOKORO_URL", "")
+	melottsURL := env.Str("MELOTTS_URL", "")
+	whisperServerURL := env.Str("WHISPER_SERVER_URL", "")
+	whisperControlURL := env.Str("WHISPER_CONTROL_URL", "")
+	qdrantURL := env.Str("QDRANT_URL", "")
+	elevenlabsAPIKey := env.Str("ELEVENLABS_API_KEY", "")
+	elevenlabsVoiceID := env.Str("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
+	elevenlabsModelID := env.Str("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")
+	openaiAPIKey := env.Str("OPENAI_API_KEY", "")
+	openaiURL := env.Str("OPENAI_URL", "https://api.openai.com")
+	openaiModel := env.Str("OPENAI_MODEL", "gpt-5.2-codex")
+	anthropicAPIKey := env.Str("ANTHROPIC_API_KEY", "")
+	anthropicURL := env.Str("ANTHROPIC_URL", "https://api.anthropic.com")
+	anthropicModel := env.Str("ANTHROPIC_MODEL", "claude-sonnet-4-5")
 
 	// Service orchestrator
 	svcRegistry := orchestrator.NewRegistry(map[string]orchestrator.ServiceMeta{
@@ -112,8 +111,17 @@ func main() {
 	}
 	asrRouter := pipeline.NewASRRouter(asrBackends, "whisper-server")
 
-	// LLM client
-	llmClient := pipeline.NewLLMClient(ollamaURL, ollamaModel, t.LLMSystemPrompt, t.LLMMaxTokens, t.LLMPoolSize)
+	// LLM backends
+	llmBackends := map[string]pipeline.LLMChatClient{
+		"ollama": pipeline.NewOllamaLLMClient(ollamaURL, ollamaModel, t.LLMSystemPrompt, t.LLMMaxTokens, t.LLMPoolSize),
+	}
+	if openaiAPIKey != "" {
+		llmBackends["openai"] = pipeline.NewOpenAILLMClient(openaiAPIKey, openaiURL, openaiModel, t.LLMMaxTokens, t.LLMPoolSize)
+	}
+	if anthropicAPIKey != "" {
+		llmBackends["anthropic"] = pipeline.NewAnthropicLLMClient(anthropicAPIKey, anthropicURL, anthropicModel, t.LLMMaxTokens, t.LLMPoolSize)
+	}
+	llmRouter := pipeline.NewLLMRouter(llmBackends, "ollama")
 
 	// TTS backends
 	ttsHTTP := pipeline.NewPooledHTTPClient(t.TTSPoolSize, 30*time.Second)
@@ -142,7 +150,7 @@ func main() {
 
 	handler := ws.NewHandler(ws.HandlerConfig{
 		ASRClient:     asrRouter,
-		LLMClient:     llmClient,
+		LLMClient:     llmRouter,
 		TTSClient:     ttsClient,
 		VADConfig:     vad,
 		MaxConcurrent: t.MaxConcurrentCalls,
@@ -158,6 +166,7 @@ func main() {
 		ollamaModel:       ollamaModel,
 		whisperControlURL: whisperControlURL,
 		asrRouter:         asrRouter,
+		llmRouter:         llmRouter,
 		ttsClient:         ttsClient,
 		svcMgr:            svcMgr,
 		gpu:               gpu,

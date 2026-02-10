@@ -121,12 +121,6 @@ func (o *openaiSynthesizer) SynthesizeAudio(ctx context.Context, text string) ([
 	return doTTSRequest(o.client, req)
 }
 
-// HasEngine reports whether the router has a backend for the given engine name.
-// Delegates to the embedded Router.Has method.
-func (r *TTSRouter) HasEngine(engine string) bool {
-	return r.Has(engine)
-}
-
 // --- ElevenLabs backend (cloud API, returns MP3 via api.elevenlabs.io) ---
 
 type elevenlabsSynthesizer struct {

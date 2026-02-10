@@ -26,7 +26,7 @@ export const useAudioStream = (opts) => {
           stt_engine: opts.sttEngine(),
           system_prompt: opts.systemPrompt(),
           llm_model: opts.llmModel(),
-          mode: "conversation",
+          llm_engine: opts.llmEngine(),
         }),
       );
     };

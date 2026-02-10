@@ -20,6 +20,7 @@ type deps struct {
 	ollamaModel       string
 	whisperControlURL string
 	asrRouter         *pipeline.ASRRouter
+	llmRouter         *pipeline.LLMRouter
 	ttsClient         *pipeline.TTSRouter
 	svcMgr            *orchestrator.HTTPControlManager
 	gpu               *gpuHub
@@ -53,9 +54,10 @@ func registerRoutes(mux *http.ServeMux, d deps) {
 				"engines": d.asrRouter.Engines(),
 			},
 			"llm": map[string]interface{}{
-				"active": d.ollamaModel,
-				"models": llmModels,
-				"loaded": loadedNames,
+				"active":  d.ollamaModel,
+				"models":  llmModels,
+				"loaded":  loadedNames,
+				"engines": d.llmRouter.Engines(),
 			},
 			"tts": map[string]interface{}{
 				"engines": d.ttsClient.Engines(),
@@ -123,7 +125,7 @@ func registerRoutes(mux *http.ServeMux, d deps) {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		if !d.ttsClient.HasEngine(req.Engine) {
+		if !d.ttsClient.Has(req.Engine) {
 			http.Error(w, "engine not available", http.StatusNotFound)
 			return
 		}
@@ -141,7 +143,7 @@ func registerRoutes(mux *http.ServeMux, d deps) {
 
 	mux.HandleFunc("/api/tts/health", func(w http.ResponseWriter, r *http.Request) {
 		engine := r.URL.Query().Get("engine")
-		if !d.ttsClient.HasEngine(engine) {
+		if !d.ttsClient.Has(engine) {
 			http.Error(w, "engine not available", http.StatusNotFound)
 			return
 		}

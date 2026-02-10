@@ -1,4 +1,7 @@
 import { createSignal, Show } from "solid-js";
+import { marked } from "marked";
+
+marked.setOptions({ breaks: true, gfm: true });
 
 export const StatusDot = (props) => (
   <span class="status-dot" style={{ background: props.color }} />
@@ -16,10 +19,12 @@ export const TranscriptEntry = (props) => {
   const isAgent = () => props.role === "agent";
   return (
     <div class={`transcript-line ${isAgent() ? "transcript-agent" : "transcript-user"}`}>
-      <p>
-        <strong>{isAgent() ? "Agent: " : "You: "}</strong>
-        {props.text}
-      </p>
+      <Show when={isAgent()} fallback={<p><strong>You: </strong>{props.text}</p>}>
+        <div class="agent-markdown">
+          <strong>Agent: </strong>
+          <span innerHTML={marked.parse(props.text || "")} />
+        </div>
+      </Show>
       <Show when={isAgent() && props.thinking}>
         <button class="thinking-toggle" onClick={() => setShowThinking((v) => !v)}>
           {showThinking() ? "Hide reasoning" : "Show reasoning"}
@@ -37,10 +42,10 @@ export const StreamingEntry = (props) => {
   return (
     <div class="transcript-line transcript-agent">
       <Show when={props.text}>
-        <p class="transcript-streaming">
+        <div class="transcript-streaming agent-markdown">
           <strong>Agent: </strong>
-          {props.text}
-        </p>
+          <span innerHTML={marked.parse(props.text || "")} />
+        </div>
       </Show>
       <Show when={props.thinking}>
         <button class="thinking-toggle" onClick={() => setShowThinking((v) => !v)}>

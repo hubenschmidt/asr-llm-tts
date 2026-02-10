@@ -29,19 +29,31 @@ const ENGINE_TO_SERVICE = {
   "whisper-server": "whisper-server",
 };
 
+const CLOUD_MODELS = {
+  openai: ["gpt-5.2-codex", "gpt-5.2", "gpt-5-mini", "gpt-5-nano"],
+  anthropic: ["claude-opus-4-6", "claude-sonnet-4-5", "claude-haiku-4-5"],
+};
+
 export const CallPanel = () => {
   const [ttsEngine, _setTtsEngine] = createSignal(localStorage.getItem("ttsEngine") || "");
   const [sttEngine, setSttEngine] = createSignal("");
   const [systemPrompt, setSystemPrompt] = createSignal(localStorage.getItem("systemPrompt") || DEFAULT_PROMPT);
   const [llmModel, _setLlmModel] = createSignal("");
+  const [llmEngine, _setLlmEngine] = createSignal(localStorage.getItem("llmEngine") || "ollama");
 
   const setTtsEngine = (v) => { _setTtsEngine(v); localStorage.setItem("ttsEngine", v); };
   const setLlmModel = (v) => { _setLlmModel(v); localStorage.setItem("llmModel", v); };
-  const [llmModels, setLlmModels] = createSignal([]);
+  const setLlmEngine = (v) => { _setLlmEngine(v); localStorage.setItem("llmEngine", v); };
+  const [ollamaModels, setOllamaModels] = createSignal([]);
+  const llmModels = () => {
+    const cloud = CLOUD_MODELS[llmEngine()];
+    return cloud || ollamaModels();
+  };
   const [loadingSTT, setLoadingSTT] = createSignal(false);
   const [loadingLLM, setLoadingLLM] = createSignal(false);
   const [loadingTTS, setLoadingTTS] = createSignal(false);
   const [availableTTS, setAvailableTTS] = createSignal([]);
+  const [availableLLMEngines, setAvailableLLMEngines] = createSignal(["ollama"]);
   const [transcripts, setTranscripts] = createSignal([]);
   const [llmResponse, setLlmResponse] = createSignal("");
   const [pendingThinking, setPendingThinking] = createSignal("");
@@ -104,9 +116,12 @@ export const CallPanel = () => {
   const fetchModels = () => {
     apiFetchModels()
       .then((data) => {
-        setLlmModels(data.llm.models);
+        setOllamaModels(data.llm.models);
+        if (data.llm?.engines) setAvailableLLMEngines(data.llm.engines);
         if (data.tts?.engines) setAvailableTTS(data.tts.engines);
         if (llmModel()) return;
+        const cloud = CLOUD_MODELS[llmEngine()];
+        if (cloud) { setLlmModel(cloud[0]); return; }
         if (data.llm.loaded?.length > 0) { setLlmModel(data.llm.loaded[0]); return; }
         const saved = localStorage.getItem("llmModel");
         if (saved && data.llm.models.includes(saved)) setLlmModel(saved);
@@ -205,6 +220,7 @@ export const CallPanel = () => {
     sttEngine,
     systemPrompt,
     llmModel,
+    llmEngine,
     onTranscript: (text) =>
       setTranscripts((prev) => [...prev, { role: "user", text }]),
     onLLMToken: (token) => setLlmResponse((prev) => prev + token),
@@ -269,11 +285,21 @@ export const CallPanel = () => {
       .finally(() => { setDownloadingModel(""); setDownloadProgress(null); });
   };
 
+  const handleLLMEngineChange = (e) => {
+    const engine = e.target.value;
+    if (!engine) return;
+    setLlmEngine(engine);
+    setLlmModel("");
+    const defaults = CLOUD_MODELS[engine];
+    if (defaults) setLlmModel(defaults[0]);
+  };
+
   const handleLLMChange = (e) => {
     const model = e.target.value;
     if (!model) return;
     const prev = llmModel();
     setLlmModel(model);
+    if (llmEngine() !== "ollama") return;
     setLoadingLLM(true);
     const unload = prev && prev !== model ? unloadModel("llm", prev) : Promise.resolve();
     unload
@@ -347,8 +373,8 @@ export const CallPanel = () => {
   };
 
   const configProps = {
-    sttEngine, sttModel, sttModels, llmModel, llmModels, ttsEngine,
-    availableTTS, loadingSTT, loadingLLM, loadingTTS, isStreaming,
+    sttEngine, sttModel, sttModels, llmEngine, llmModel, llmModels, ttsEngine,
+    availableTTS, availableLLMEngines, loadingSTT, loadingLLM, loadingTTS, isStreaming,
     systemPrompt, serviceStatuses, downloadingModel, downloadProgress,
   };
 
@@ -356,6 +382,7 @@ export const CallPanel = () => {
     sttChange: handleSTTChange,
     sttModelChange: handleSTTModelChange,
     sttModelDownload: handleSTTModelDownload,
+    llmEngineChange: handleLLMEngineChange,
     llmChange: handleLLMChange,
     ttsChange: handleTTSChange,
     unloadSTT: handleUnloadSTT,

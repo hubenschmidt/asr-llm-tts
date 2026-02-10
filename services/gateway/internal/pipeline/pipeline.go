@@ -15,7 +15,7 @@ import (
 // Config holds pipeline configuration.
 type Config struct {
 	ASRClient    *ASRRouter
-	LLMClient    *LLMClient
+	LLMClient    *LLMRouter
 	TTSClient    *TTSRouter
 	VADConfig    audio.VADConfig
 	RAGClient    *RAGClient
@@ -23,6 +23,7 @@ type Config struct {
 	SessionID    string
 	SystemPrompt string
 	LLMModel     string
+	LLMEngine    string
 }
 
 // Pipeline processes a single call session through ASR → LLM → TTS.
@@ -171,7 +172,7 @@ func (p *Pipeline) streamLLMWithTTS(ctx context.Context, transcript, ragContext,
 	// Thinking is separated by Ollama (think:true), so onToken only gets content.
 	var sb sentenceBuffer
 
-	llmResult, err := p.cfg.LLMClient.Chat(ctx, transcript, ragContext, p.cfg.SystemPrompt, p.cfg.LLMModel, func(token string) {
+	llmResult, err := p.cfg.LLMClient.Chat(ctx, transcript, ragContext, p.cfg.SystemPrompt, p.cfg.LLMModel, p.cfg.LLMEngine, func(token string) {
 		onEvent(Event{Type: "llm_token", Token: token})
 		s := sb.Add(token)
 		if s != "" {
@@ -203,7 +204,6 @@ func (p *Pipeline) streamLLMWithTTS(ctx context.Context, transcript, ragContext,
 
 	return ttsMs, llmResult, nil
 }
-
 
 func (p *Pipeline) consumeSentences(ctx context.Context, sentenceCh <-chan string, ttsEngine string, onEvent EventCallback, totalMs *float64, mu *sync.Mutex) {
 	for sentence := range sentenceCh {

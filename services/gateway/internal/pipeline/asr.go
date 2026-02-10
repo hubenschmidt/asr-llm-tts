@@ -65,32 +65,6 @@ func NewASRClient(url string, poolSize int) *MultipartASRClient {
 	}
 }
 
-// Warmup sends a tiny silent clip to verify the server is responsive.
-func (c *MultipartASRClient) Warmup(ctx context.Context) error {
-	silence := make([]float32, 16000) // 1 second of silence at 16kHz
-	body, contentType, err := buildMultipartAudio(silence)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, "POST", c.url+c.endpoint, body)
-	if err != nil {
-		return fmt.Errorf("create warmup request: %w", err)
-	}
-	req.Header.Set("Content-Type", contentType)
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("%s warmup: %w", c.label, err)
-	}
-	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s warmup status %d", c.label, resp.StatusCode)
-	}
-	return nil
-}
-
 // Transcribe sends float32 audio samples (16kHz mono) as multipart WAV and returns the transcript.
 func (c *MultipartASRClient) Transcribe(ctx context.Context, samples []float32) (*ASRResult, error) {
 	start := time.Now()

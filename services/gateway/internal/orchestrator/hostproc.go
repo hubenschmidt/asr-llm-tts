@@ -13,10 +13,9 @@ import (
 type ServiceStatus string
 
 const (
-	StatusStopped  ServiceStatus = "stopped"
-	StatusStarting ServiceStatus = "starting"
-	StatusRunning  ServiceStatus = "running"
-	StatusHealthy  ServiceStatus = "healthy"
+	StatusStopped ServiceStatus = "stopped"
+	StatusRunning ServiceStatus = "running"
+	StatusHealthy ServiceStatus = "healthy"
 )
 
 // ServiceInfo holds the current state of a managed service.

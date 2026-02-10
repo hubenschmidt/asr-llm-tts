@@ -13,24 +13,9 @@ import (
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/metrics"
 )
 
-// LLMClient streams chat completions from Ollama.
-type LLMClient struct {
-	url          string
-	model        string
-	systemPrompt string
-	maxTokens    int
-	client       *http.Client
-}
-
-// NewLLMClient creates an Ollama HTTP client.
-func NewLLMClient(url, model, systemPrompt string, maxTokens, poolSize int) *LLMClient {
-	return &LLMClient{
-		url:          url,
-		model:        model,
-		systemPrompt: systemPrompt,
-		maxTokens:    maxTokens,
-		client:       NewPooledHTTPClient(poolSize, 60*time.Second),
-	}
+// LLMChatClient produces streaming chat completions from a user message.
+type LLMChatClient interface {
+	Chat(ctx context.Context, userMessage, ragContext, systemPrompt, model string, onToken TokenCallback) (*LLMResult, error)
 }
 
 // LLMResult holds the complete LLM response with timing.
@@ -44,10 +29,49 @@ type LLMResult struct {
 // TokenCallback is called for each streamed token.
 type TokenCallback func(token string)
 
+// LLMRouter dispatches to the correct LLM backend based on engine name.
+type LLMRouter struct {
+	*Router[LLMChatClient]
+}
+
+// NewLLMRouter creates a router with registered LLM backends and a fallback default.
+func NewLLMRouter(backends map[string]LLMChatClient, fallback string) *LLMRouter {
+	return &LLMRouter{Router: NewRouter(backends, fallback)}
+}
+
+// Chat routes to the correct backend and streams a chat completion.
+func (r *LLMRouter) Chat(ctx context.Context, userMessage, ragContext, systemPrompt, model, engine string, onToken TokenCallback) (*LLMResult, error) {
+	backend, err := r.Route(engine)
+	if err != nil {
+		return nil, err
+	}
+	return backend.Chat(ctx, userMessage, ragContext, systemPrompt, model, onToken)
+}
+
+// --- Ollama backend ---
+
+// OllamaLLMClient streams chat completions from Ollama.
+type OllamaLLMClient struct {
+	url          string
+	model        string
+	systemPrompt string
+	maxTokens    int
+	client       *http.Client
+}
+
+// NewOllamaLLMClient creates an Ollama HTTP client.
+func NewOllamaLLMClient(url, model, systemPrompt string, maxTokens, poolSize int) *OllamaLLMClient {
+	return &OllamaLLMClient{
+		url:          url,
+		model:        model,
+		systemPrompt: systemPrompt,
+		maxTokens:    maxTokens,
+		client:       NewPooledHTTPClient(poolSize, 60*time.Second),
+	}
+}
+
 // Chat sends a user message to Ollama and streams the response.
-// systemPrompt overrides the client default when non-empty.
-// ragContext is injected as a second system message when non-empty.
-func (c *LLMClient) Chat(ctx context.Context, userMessage, ragContext, systemPrompt, model string, onToken TokenCallback) (*LLMResult, error) {
+func (c *OllamaLLMClient) Chat(ctx context.Context, userMessage, ragContext, systemPrompt, model string, onToken TokenCallback) (*LLMResult, error) {
 	start := time.Now()
 
 	resp, err := c.postChatRequest(ctx, userMessage, ragContext, systemPrompt, model)
@@ -59,7 +83,7 @@ func (c *LLMClient) Chat(ctx context.Context, userMessage, ragContext, systemPro
 	if resp.StatusCode != http.StatusOK {
 		metrics.Errors.WithLabelValues("llm", "status").Inc()
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("llm status %d: %s", resp.StatusCode, body)
+		return nil, fmt.Errorf("ollama status %d: %s", resp.StatusCode, body)
 	}
 
 	sr := c.consumeStream(resp, onToken)
@@ -80,7 +104,7 @@ func (c *LLMClient) Chat(ctx context.Context, userMessage, ragContext, systemPro
 	}, nil
 }
 
-func (c *LLMClient) postChatRequest(ctx context.Context, userMessage, ragContext, systemPrompt, model string) (*http.Response, error) {
+func (c *OllamaLLMClient) postChatRequest(ctx context.Context, userMessage, ragContext, systemPrompt, model string) (*http.Response, error) {
 	sysPrompt := c.systemPrompt
 	if systemPrompt != "" {
 		sysPrompt = systemPrompt
@@ -106,19 +130,19 @@ func (c *LLMClient) postChatRequest(ctx context.Context, userMessage, ragContext
 
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("marshal llm request: %w", err)
+		return nil, fmt.Errorf("marshal ollama request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", c.url+"/api/chat", bytes.NewReader(bodyBytes))
 	if err != nil {
-		return nil, fmt.Errorf("create llm request: %w", err)
+		return nil, fmt.Errorf("create ollama request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.client.Do(req)
 	if err != nil {
 		metrics.Errors.WithLabelValues("llm", "http").Inc()
-		return nil, fmt.Errorf("llm request: %w", err)
+		return nil, fmt.Errorf("ollama request: %w", err)
 	}
 
 	return resp, nil
@@ -130,7 +154,7 @@ type streamResult struct {
 	ttft     time.Time
 }
 
-func (c *LLMClient) consumeStream(resp *http.Response, onToken TokenCallback) streamResult {
+func (c *OllamaLLMClient) consumeStream(resp *http.Response, onToken TokenCallback) streamResult {
 	var sr streamResult
 	scanner := bufio.NewScanner(resp.Body)
 
@@ -163,14 +187,13 @@ func applyChunk(chunk *parsedChunk, sr streamResult, onToken TokenCallback) stre
 	return sr
 }
 
-// parsedChunk is the extracted content from an Ollama stream chunk.
 type parsedChunk struct {
 	Content  string
 	Thinking string
 	Done     bool
 }
 
-func (c *LLMClient) parseChunk(data []byte) *parsedChunk {
+func (c *OllamaLLMClient) parseChunk(data []byte) *parsedChunk {
 	var chunk ollamaStreamChunk
 	if json.Unmarshal(data, &chunk) != nil {
 		return &parsedChunk{}

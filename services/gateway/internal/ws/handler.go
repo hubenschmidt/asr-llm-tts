@@ -22,13 +22,13 @@ var upgrader = websocket.Upgrader{
 
 // HandlerConfig holds the shared backend clients for all call sessions.
 type HandlerConfig struct {
-	ASRClient      *pipeline.ASRRouter
-	LLMClient      *pipeline.LLMClient
-	TTSClient      *pipeline.TTSRouter
-	VADConfig      audio.VADConfig
-	MaxConcurrent  int
-	RAGClient      *pipeline.RAGClient
-	CallHistory    *pipeline.CallHistoryClient
+	ASRClient     *pipeline.ASRRouter
+	LLMClient     *pipeline.LLMRouter
+	TTSClient     *pipeline.TTSRouter
+	VADConfig     audio.VADConfig
+	MaxConcurrent int
+	RAGClient     *pipeline.RAGClient
+	CallHistory   *pipeline.CallHistoryClient
 }
 
 // Handler manages WebSocket call sessions with admission control.
@@ -55,9 +55,9 @@ type callMetadata struct {
 	SampleRate   int    `json:"sample_rate"`
 	TTSEngine    string `json:"tts_engine"`
 	STTEngine    string `json:"stt_engine"`
-	Mode         string `json:"mode"`
 	SystemPrompt string `json:"system_prompt"`
 	LLMModel     string `json:"llm_model"`
+	LLMEngine    string `json:"llm_engine"`
 }
 
 // ServeHTTP upgrades the connection and runs the call session.
@@ -115,7 +115,12 @@ func (h *Handler) runSession(conn *websocket.Conn) {
 	if systemPrompt == "" {
 		systemPrompt = "You are a helpful call center agent. Keep responses concise and conversational."
 	}
-	slog.Info("call started", "session_id", sessionID, "codec", codec, "sample_rate", sampleRate, "tts_engine", ttsEngine, "stt_engine", sttEngine)
+	llmEngine := meta.LLMEngine
+	if llmEngine == "" {
+		llmEngine = "ollama"
+	}
+
+	slog.Info("call started", "session_id", sessionID, "codec", codec, "sample_rate", sampleRate, "tts_engine", ttsEngine, "stt_engine", sttEngine, "llm_engine", llmEngine)
 
 	pipe := pipeline.New(pipeline.Config{
 		ASRClient:    h.cfg.ASRClient,
@@ -127,6 +132,7 @@ func (h *Handler) runSession(conn *websocket.Conn) {
 		SessionID:    sessionID,
 		SystemPrompt: systemPrompt,
 		LLMModel:     meta.LLMModel,
+		LLMEngine:    llmEngine,
 	})
 
 	sendEvent := newEventSender(conn)

@@ -106,13 +106,30 @@ export const ConfigSidebar = (props) => {
           </div>
         </Show>
 
-        {/* Language Model */}
+        {/* LLM Engine */}
         <div class="model-group">
           <label class="label">
             <StatusDot color={on.llmDotColor()} />
-            Language Model
-            <Tooltip text="Generates the text response from your transcribed speech. Larger models produce better answers but increase latency." />
+            LLM Engine
+            <Tooltip text="LLM provider. Ollama runs locally; OpenAI and Anthropic use cloud APIs." />
           </label>
+          <div class="model-row-inner">
+            <select
+              value={c.llmEngine()}
+              onChange={on.llmEngineChange}
+              class="select"
+              disabled={c.isStreaming() || c.loadingLLM()}
+            >
+              <For each={c.availableLLMEngines()}>
+                {(e) => <option value={e}>{e}</option>}
+              </For>
+            </select>
+          </div>
+        </div>
+
+        {/* Language Model */}
+        <div class="model-group">
+          <label class="label">Language Model</label>
           <div class="model-row-inner">
             <select
               value={c.llmModel()}
@@ -130,13 +147,15 @@ export const ConfigSidebar = (props) => {
             <Show when={c.loadingLLM()}>
               <span class="spinner" />
             </Show>
-            <button
-              class="unload-btn"
-              disabled={c.isStreaming() || c.loadingLLM() || !c.llmModel()}
-              onClick={on.unloadLLM}
-            >
-              Unload
-            </button>
+            <Show when={c.llmEngine() === "ollama"}>
+              <button
+                class="unload-btn"
+                disabled={c.isStreaming() || c.loadingLLM() || !c.llmModel()}
+                onClick={on.unloadLLM}
+              >
+                Unload
+              </button>
+            </Show>
           </div>
         </div>
 
