@@ -106,42 +106,31 @@ export const ConfigSidebar = (props) => {
           </div>
         </Show>
 
-        {/* LLM Engine */}
+        {/* Language Model */}
         <div class="model-group">
           <label class="label">
             <StatusDot color={on.llmDotColor()} />
-            LLM Engine
-            <Tooltip text="LLM provider. Ollama runs locally; OpenAI and Anthropic use cloud APIs." />
+            Language Model
+            <Tooltip text="LLM provider + model. Ollama runs locally; OpenAI and Anthropic use cloud APIs." />
           </label>
           <div class="model-row-inner">
             <select
-              value={c.llmEngine()}
-              onChange={on.llmEngineChange}
-              class="select"
-              disabled={c.isStreaming() || c.loadingLLM()}
-            >
-              <For each={c.availableLLMEngines()}>
-                {(e) => <option value={e}>{e}</option>}
-              </For>
-            </select>
-          </div>
-        </div>
-
-        {/* Language Model */}
-        <div class="model-group">
-          <label class="label">Language Model</label>
-          <div class="model-row-inner">
-            <select
               value={c.llmModel()}
-              onChange={on.llmChange}
+              onChange={on.llmModelChange}
               class="select"
               disabled={c.isStreaming() || c.loadingLLM()}
             >
               <Show when={!c.llmModel()}>
                 <option value="">Select model...</option>
               </Show>
-              <For each={c.llmModels()}>
-                {(m) => <option value={m}>{m}</option>}
+              <For each={c.allLLMModels()}>
+                {(group) => (
+                  <optgroup label={group.label}>
+                    <For each={group.models}>
+                      {(m) => <option value={m}>{m}</option>}
+                    </For>
+                  </optgroup>
+                )}
               </For>
             </select>
             <Show when={c.loadingLLM()}>

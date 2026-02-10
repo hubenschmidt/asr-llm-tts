@@ -53,9 +53,19 @@ export const CallPanel = () => {
   const setLlmModel = (v) => { _setLlmModel(v); localStorage.setItem("llmModel", v); };
   const setLlmEngine = (v) => { _setLlmEngine(v); localStorage.setItem("llmEngine", v); };
   const [ollamaModels, setOllamaModels] = createSignal([]);
-  const llmModels = () => {
-    const cloud = CLOUD_MODELS[llmEngine()];
-    return cloud || ollamaModels();
+  const allLLMModels = () => {
+    const groups = [];
+    if (ollamaModels().length > 0) groups.push({ label: "Ollama (Local)", models: ollamaModels() });
+    if (availableLLMEngines().includes("openai")) groups.push({ label: "OpenAI (Cloud)", models: CLOUD_MODELS.openai });
+    if (availableLLMEngines().includes("anthropic")) groups.push({ label: "Anthropic (Cloud)", models: CLOUD_MODELS.anthropic });
+    return groups;
+  };
+
+  const modelToEngine = (model) => {
+    for (const [engine, models] of Object.entries(CLOUD_MODELS)) {
+      if (models.includes(model)) return engine;
+    }
+    return "ollama";
   };
   const [loadingSTT, setLoadingSTT] = createSignal(false);
   const [loadingLLM, setLoadingLLM] = createSignal(false);
@@ -303,21 +313,14 @@ export const CallPanel = () => {
       .finally(() => { setDownloadingModel(""); setDownloadProgress(null); });
   };
 
-  const handleLLMEngineChange = (e) => {
-    const engine = e.target.value;
-    if (!engine) return;
-    setLlmEngine(engine);
-    setLlmModel("");
-    const defaults = CLOUD_MODELS[engine];
-    if (defaults) setLlmModel(defaults[0]);
-  };
-
-  const handleLLMChange = (e) => {
+  const handleLLMModelChange = (e) => {
     const model = e.target.value;
     if (!model) return;
+    const engine = modelToEngine(model);
     const prev = llmModel();
+    setLlmEngine(engine);
     setLlmModel(model);
-    if (llmEngine() !== "ollama") return;
+    if (engine !== "ollama") return;
     setLoadingLLM(true);
     const unload = prev && prev !== model ? unloadModel("llm", prev) : Promise.resolve();
     unload
@@ -399,8 +402,8 @@ export const CallPanel = () => {
   };
 
   const configProps = {
-    sttEngine, sttModel, sttModels, llmEngine, llmModel, llmModels, ttsEngine,
-    availableTTS, availableLLMEngines, loadingSTT, loadingLLM, loadingTTS, isStreaming,
+    sttEngine, sttModel, sttModels, llmEngine, llmModel, allLLMModels, ttsEngine,
+    availableTTS, loadingSTT, loadingLLM, loadingTTS, isStreaming,
     systemPrompt, promptPreset, serviceStatuses, downloadingModel, downloadProgress,
   };
 
@@ -408,8 +411,7 @@ export const CallPanel = () => {
     sttChange: handleSTTChange,
     sttModelChange: handleSTTModelChange,
     sttModelDownload: handleSTTModelDownload,
-    llmEngineChange: handleLLMEngineChange,
-    llmChange: handleLLMChange,
+    llmModelChange: handleLLMModelChange,
     ttsChange: handleTTSChange,
     unloadSTT: handleUnloadSTT,
     unloadLLM: handleUnloadLLM,
