@@ -99,7 +99,6 @@ type Event struct {
 	NoSpeechProb    float64 `json:"no_speech_prob"`
 	WER             float64 `json:"wer"`
 	NoiseSuppressed bool            `json:"noise_suppressed"`
-	Scene           *ClassifyResult `json:"scene,omitempty"`
 	Emotion         *ClassifyResult `json:"emotion,omitempty"`
 	Audio           []byte          `json:"-"`
 }
@@ -229,8 +228,6 @@ func (p *Pipeline) runFullPipeline(ctx context.Context, speechAudio []float32, t
 		copy(audioSnap, speechAudio)
 		emotionCtx, emotionCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		go func() { defer emotionCancel(); p.classifyEmotion(emotionCtx, audioSnap, onEvent, runID) }()
-		sceneCtx, sceneCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		go func() { defer sceneCancel(); p.classifyScene(sceneCtx, audioSnap, onEvent, runID) }()
 	}
 
 	// ASR — must complete before LLM can start
@@ -375,28 +372,6 @@ func (p *Pipeline) formatInput(current string) string {
 	}
 	fmt.Fprintf(&b, "User: %s", current)
 	return b.String()
-}
-
-func (p *Pipeline) classifyScene(ctx context.Context, samples []float32, onEvent EventCallback, runID string) {
-	start := time.Now()
-	result, err := p.cfg.ClassifyClient.ClassifyScene(ctx, samples)
-	if p.cfg.Tracer != nil && runID != "" {
-		status, errMsg, out := "ok", "", ""
-		if err != nil {
-			status, errMsg = "error", err.Error()
-		}
-		if result != nil {
-			out = fmt.Sprintf("label=%s conf=%.2f", result.Label, result.Confidence)
-		}
-		p.cfg.Tracer.RecordSpan(runID, "scene_classify", start, float64(time.Since(start).Milliseconds()), fmt.Sprintf("samples=%d", len(samples)), out, status, errMsg)
-	}
-	if err != nil {
-		slog.Warn("scene classification failed", "error", err)
-		return
-	}
-	metrics.ClassifySceneTotal.WithLabelValues(result.Label).Inc()
-	metrics.ClassifyDuration.WithLabelValues("scene").Observe(result.LatencyMs / 1000)
-	onEvent(Event{Type: "classification", Scene: result})
 }
 
 func (p *Pipeline) classifyEmotion(ctx context.Context, samples []float32, onEvent EventCallback, runID string) {

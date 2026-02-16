@@ -82,7 +82,6 @@ export const useAudioStream = (opts) => {
             noise_suppressed: event.noise_suppressed ?? false,
           }),
         classification: () => opts.onClassification?.({
-          scene: event.scene ?? null,
           emotion: event.emotion ?? null,
         }),
         error: () => opts.onError(event.text ?? "unknown error"),

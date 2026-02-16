@@ -7,8 +7,8 @@ services:
       - "${GATEWAY_PORT:-8000}:8000"
     env_file: .env
     depends_on:
-      noisereduce:
-        condition: service_healthy
+      # noisereduce:
+      #   condition: service_healthy
       audioclassify:
         condition: service_healthy
       piper:
@@ -60,23 +60,23 @@ services:
   #     start_period: 5s
   #   restart: unless-stopped
 
-  noisereduce:
-    build:
-      context: ./services/noisereduce
-      dockerfile: Dockerfile
-    ports:
-      - "5200:5200"
-    volumes:
-      - ./services/noisereduce/src:/app/src
-      - ./services/noisereduce/Cargo.toml:/app/Cargo.toml
-      - noisereduce-target:/app/target
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5200/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    restart: unless-stopped
+  # noisereduce:
+  #   build:
+  #     context: ./services/noisereduce
+  #     dockerfile: Dockerfile
+  #   ports:
+  #     - "5200:5200"
+  #   volumes:
+  #     - ./services/noisereduce/src:/app/src
+  #     - ./services/noisereduce/Cargo.toml:/app/Cargo.toml
+  #     - noisereduce-target:/app/target
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:5200/health"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #     start_period: 30s
+  #   restart: unless-stopped
 
   audioclassify:
     build:
@@ -84,9 +84,11 @@ services:
       dockerfile: Dockerfile
     ports:
       - "5300:5300"
+    env_file: ./services/audioclassify/.env
     volumes:
       - ./services/audioclassify/main.py:/app/main.py
       - ./services/audioclassify/models.py:/app/models.py
+      - ./models/emotion2vec:/root/.cache/modelscope/hub/models/iic/emotion2vec_base
     command:
       [
         "uvicorn",
@@ -104,7 +106,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 60s
+      start_period: 180s
     restart: unless-stopped
 
   # --- commented out services ---
@@ -201,5 +203,5 @@ volumes:
   go-mod-cache:
   go-build-cache:
   node-modules:
-  noisereduce-target:
+  # noisereduce-target:
   # qdrant-data:

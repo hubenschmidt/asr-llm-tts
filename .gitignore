@@ -6,11 +6,16 @@
 tmp/
 
 # Go
+services/gateway/gateway
+services/gateway/seed
 services/gateway/tmp/
 services/piper/tmp/
 services/piper/piper
 services/loadtest/loadtest
 cmd/whisper-control/whisper-control
+
+# Rust
+services/noisereduce/target/
 
 # Node
 node_modules/
@@ -21,6 +26,7 @@ dist/
 Thumbs.db
 
 # Models (large files)
+models/
 *.bin
 *.onnx
 

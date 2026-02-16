@@ -34,11 +34,6 @@ func NewClassifyClient(url string) *ClassifyClient {
 	}
 }
 
-// ClassifyScene sends float32 samples to the /scene endpoint.
-func (c *ClassifyClient) ClassifyScene(ctx context.Context, samples []float32) (*ClassifyResult, error) {
-	return c.post(ctx, "/scene", samples)
-}
-
 // ClassifyEmotion sends float32 samples to the /emotion endpoint.
 func (c *ClassifyClient) ClassifyEmotion(ctx context.Context, samples []float32) (*ClassifyResult, error) {
 	return c.post(ctx, "/emotion", samples)

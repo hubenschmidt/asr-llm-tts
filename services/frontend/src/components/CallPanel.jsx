@@ -310,7 +310,6 @@ export const CallPanel = () => {
       setMetricsHistory((prev) => [...prev, m]);
     },
     onClassification: (data) => setClassificationData((prev) => ({
-      scene: data.scene ?? prev?.scene ?? null,
       emotion: data.emotion ?? prev?.emotion ?? null,
     })),
     onError: (msg) => setError(msg),
@@ -564,7 +563,7 @@ export const CallPanel = () => {
                   disabled={isStreaming()}
                 />
                 <span>Audio classification</span>
-                <Tooltip text="Run scene (speech/music/noise/silence) and emotion detection in parallel. Zero impact on pipeline latency." />
+                <Tooltip text="Run intent and emotion classification on speech audio. Zero impact on pipeline latency." />
               </label>
               <label class="tuning-label">ASR prompt <Tooltip text="Hint text passed to the ASR model to improve recognition of domain-specific terms, names, or acronyms." /></label>
               <input

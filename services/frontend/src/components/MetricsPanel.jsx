@@ -40,16 +40,9 @@ export const MetricsPanel = (props) => {
         </div>
       </Show>
 
-      <Show when={props.classification?.scene || props.classification?.emotion}>
+      <Show when={props.classification?.emotion}>
         <div style={sectionStyle}>
           <h4 style={headingStyle}>Audio Classification</h4>
-          <Show when={props.classification?.scene}>
-            <DetailRow
-              label="Scene"
-              value={`${props.classification.scene.label} (${(props.classification.scene.confidence * 100).toFixed(0)}%)`}
-              color="#00b8d4"
-            />
-          </Show>
           <Show when={props.classification?.emotion}>
             <DetailRow
               label="Emotion"

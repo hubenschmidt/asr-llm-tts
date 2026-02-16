@@ -3,18 +3,16 @@ import struct
 from contextlib import asynccontextmanager
 
 import numpy as np
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request
 
-from models import EmotionClassifier, SceneClassifier
+from models import EmotionClassifier
 
-scene_model: SceneClassifier | None = None
 emotion_model: EmotionClassifier | None = None
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    global scene_model, emotion_model
-    scene_model = SceneClassifier()
+    global emotion_model
     emotion_model = EmotionClassifier()
     yield
 
@@ -30,16 +28,6 @@ def _parse_float32(body: bytes) -> np.ndarray:
 @app.get("/health")
 async def health():
     return {"status": "ok"}
-
-
-@app.post("/scene")
-async def classify_scene(request: Request):
-    body = await request.body()
-    samples = _parse_float32(body)
-    result = await asyncio.get_event_loop().run_in_executor(
-        None, scene_model.classify, samples,
-    )
-    return result
 
 
 @app.post("/emotion")

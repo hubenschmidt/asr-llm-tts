@@ -6,7 +6,6 @@ const SPAN_COLORS = {
   llm: "bar-llm",
   tts: "bar-tts",
   rag: "bar-rag",
-  scene_classify: "bar-scene_classify",
   emotion_classify: "bar-emotion_classify",
 };
 
