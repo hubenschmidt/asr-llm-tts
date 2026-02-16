@@ -65,4 +65,9 @@ var (
 		Name: "asr_noise_filtered_total",
 		Help: "Transcripts dropped by confidence or noise filter",
 	})
+
+	ASRWEREstimate = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "asr_wer_estimate",
+		Help: "Latest WER estimate from reference transcript evaluation",
+	})
 )

@@ -48,6 +48,7 @@ export const useAudioStream = (opts) => {
         confidence_threshold: opts.confidenceThreshold?.() ?? 0.6,
         reference_transcript: opts.referenceTranscript?.() || "",
         tts_speed: opts.ttsSpeed?.() ?? 1.0,
+        tts_pitch: opts.ttsPitch?.() ?? 1.0,
         text_normalization: opts.textNormalization?.() ?? true,
         inter_sentence_pause_ms: opts.interSentencePauseMs?.() ?? 0,
       };

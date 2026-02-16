@@ -54,6 +54,7 @@ type Config struct {
 	ConfidenceThreshold  float64
 	ReferenceTranscript  string
 	TTSSpeed             float64
+	TTSPitch             float64
 	TextNormalization    bool
 	InterSentencePauseMs int
 }
@@ -209,7 +210,8 @@ func (p *Pipeline) runFullPipeline(ctx context.Context, speechAudio []float32, t
 	e2eStart := time.Now()
 
 	// ASR — must complete before LLM can start
-	asrResult, err := p.cfg.ASRClient.Transcribe(ctx, speechAudio, asrEngine)
+	asrOpts := ASROptions{Prompt: p.cfg.ASRPrompt}
+	asrResult, err := p.cfg.ASRClient.Transcribe(ctx, speechAudio, asrEngine, asrOpts)
 	if err != nil {
 		return fmt.Errorf("asr: %w", err)
 	}
@@ -231,7 +233,16 @@ func (p *Pipeline) runFullPipeline(ctx context.Context, speechAudio []float32, t
 	var wer float64 = -1
 	if p.cfg.ReferenceTranscript != "" {
 		wer = ComputeWER(p.cfg.ReferenceTranscript, transcript)
-		slog.Info("wer_eval", "reference", p.cfg.ReferenceTranscript, "hypothesis", transcript, "wer", wer)
+		metrics.ASRWEREstimate.Set(wer)
+		slog.Info("transcript_eval",
+			"session_id", p.cfg.SessionID,
+			"reference", p.cfg.ReferenceTranscript,
+			"hypothesis", transcript,
+			"wer", wer,
+			"no_speech_prob", asrResult.NoSpeechProb,
+			"asr_ms", asrResult.LatencyMs,
+			"noise_suppression", p.cfg.NoiseSuppression,
+		)
 	}
 
 	// RAG — retrieve relevant context (non-fatal on error)
@@ -388,7 +399,7 @@ func (p *Pipeline) streamLLMWithTTS(ctx context.Context, transcript, ragContext,
 }
 
 func (p *Pipeline) consumeSentences(ctx context.Context, sentenceCh <-chan string, ttsEngine string, onEvent EventCallback, totalMs *float64, mu *sync.Mutex) {
-	ttsOpts := TTSOptions{Speed: p.cfg.TTSSpeed}
+	ttsOpts := TTSOptions{Speed: p.cfg.TTSSpeed, Pitch: p.cfg.TTSPitch}
 
 	for sentence := range sentenceCh {
 		sentence = StripMarkdown(sentence)

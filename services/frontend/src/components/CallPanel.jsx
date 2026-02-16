@@ -106,9 +106,11 @@ export const CallPanel = () => {
 
   // TTS tuning signals (localStorage-persisted)
   const [ttsSpeed, _setTtsSpeed] = createSignal(parseFloat(localStorage.getItem("ttsSpeed")) || 1.0);
+  const [ttsPitch, _setTtsPitch] = createSignal(parseFloat(localStorage.getItem("ttsPitch")) || 1.0);
   const [textNormalization, _setTextNormalization] = createSignal(localStorage.getItem("textNormalization") !== "false");
   const [interSentencePauseMs, _setInterSentencePauseMs] = createSignal(parseInt(localStorage.getItem("interSentencePauseMs")) || 0);
   const setTtsSpeed = (v) => { _setTtsSpeed(v); localStorage.setItem("ttsSpeed", v); };
+  const setTtsPitch = (v) => { _setTtsPitch(v); localStorage.setItem("ttsPitch", v); };
   const setTextNormalization = (v) => { _setTextNormalization(v); localStorage.setItem("textNormalization", v); };
   const setInterSentencePauseMs = (v) => { _setInterSentencePauseMs(v); localStorage.setItem("interSentencePauseMs", v); };
 
@@ -278,6 +280,7 @@ export const CallPanel = () => {
     confidenceThreshold,
     referenceTranscript,
     ttsSpeed,
+    ttsPitch,
     textNormalization,
     interSentencePauseMs,
     onTranscript: (text) =>
@@ -584,6 +587,18 @@ export const CallPanel = () => {
                 min="0.75" max="1.5" step="0.05"
                 value={ttsSpeed()}
                 onInput={(e) => setTtsSpeed(parseFloat(e.target.value))}
+                disabled={isStreaming()}
+              />
+              <label class="tuning-label">
+                Pitch: {ttsPitch().toFixed(2)}
+                <Tooltip text="Voice pitch control. Affects ElevenLabs stability parameter. Lower = more stable/consistent, higher = more expressive/variable." />
+              </label>
+              <input
+                type="range"
+                class="tuning-range"
+                min="0.5" max="1.5" step="0.05"
+                value={ttsPitch()}
+                onInput={(e) => setTtsPitch(parseFloat(e.target.value))}
                 disabled={isStreaming()}
               />
               <label class="tuning-row">

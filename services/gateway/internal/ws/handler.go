@@ -65,6 +65,7 @@ type callMetadata struct {
 	ConfidenceThreshold  float64 `json:"confidence_threshold"`
 	ReferenceTranscript  string  `json:"reference_transcript"`
 	TTSSpeed             float64 `json:"tts_speed"`
+	TTSPitch             float64 `json:"tts_pitch"`
 	TextNormalization    *bool   `json:"text_normalization"`
 	InterSentencePauseMs int     `json:"inter_sentence_pause_ms"`
 }
@@ -176,6 +177,7 @@ func (h *Handler) runSession(conn *websocket.Conn) {
 		ConfidenceThreshold:  confidenceThreshold,
 		ReferenceTranscript:  meta.ReferenceTranscript,
 		TTSSpeed:             ttsSpeed,
+		TTSPitch:             meta.TTSPitch,
 		TextNormalization:    textNorm,
 		InterSentencePauseMs: meta.InterSentencePauseMs,
 	})

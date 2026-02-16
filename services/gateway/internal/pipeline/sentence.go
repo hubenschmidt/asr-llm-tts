@@ -34,8 +34,9 @@ func (s *sentenceBuffer) Flush() string {
 
 var sentenceEnders = map[byte]bool{'.': true, '!': true, '?': true}
 
-// splitAtSentence finds the last sentence boundary in text.
-// A boundary is a sentence ender (.!?) followed by whitespace.
+// splitAtSentence finds the last sentence or clause boundary in text.
+// Primary boundaries: .!? followed by whitespace.
+// Secondary boundaries: semicolons, em-dashes (—), and commas after >15 words.
 // Returns (completeSentences, remainder). If no boundary, returns ("", text).
 func splitAtSentence(text string) (string, string) {
 	lastIdx := -1
@@ -44,14 +45,59 @@ func splitAtSentence(text string) (string, string) {
 			lastIdx = i + 1
 		}
 	}
-	if lastIdx < 0 {
-		return "", text
+	if lastIdx >= 0 {
+		return strings.TrimSpace(text[:lastIdx]), text[lastIdx:]
 	}
-	return strings.TrimSpace(text[:lastIdx]), text[lastIdx:]
+
+	// Secondary: semicolons and em-dashes
+	lastIdx = findClauseBoundary(text)
+	if lastIdx >= 0 {
+		return strings.TrimSpace(text[:lastIdx]), text[lastIdx:]
+	}
+
+	// Tertiary: comma after >15 words
+	lastIdx = findLongCommaClause(text)
+	if lastIdx >= 0 {
+		return strings.TrimSpace(text[:lastIdx+1]), text[lastIdx+1:]
+	}
+
+	return "", text
 }
 
 func isWordBoundary(ch byte) bool {
 	return ch == ' ' || ch == '\n' || ch == '\t'
+}
+
+// findClauseBoundary returns the split index after a semicolon or em-dash followed by space.
+func findClauseBoundary(text string) int {
+	lastIdx := -1
+	for i := range len(text) - 1 {
+		ch := text[i]
+		if (ch == ';' || isEmDash(text, i)) && isWordBoundary(text[i+1]) {
+			lastIdx = i + 1
+		}
+	}
+	return lastIdx
+}
+
+// isEmDash checks for a UTF-8 em-dash (U+2014: 0xE2 0x80 0x94) at position i.
+func isEmDash(text string, i int) bool {
+	return i+2 < len(text) && text[i] == 0xE2 && text[i+1] == 0x80 && text[i+2] == 0x94
+}
+
+// findLongCommaClause returns the index of the last comma where the preceding text has >15 words.
+func findLongCommaClause(text string) int {
+	lastIdx := -1
+	words := 0
+	for i := range len(text) {
+		if text[i] == ' ' {
+			words++
+		}
+		if text[i] == ',' && words > 15 {
+			lastIdx = i
+		}
+	}
+	return lastIdx
 }
 
 var (

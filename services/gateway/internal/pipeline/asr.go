@@ -14,9 +14,14 @@ import (
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/metrics"
 )
 
+// ASROptions holds per-call ASR tuning parameters.
+type ASROptions struct {
+	Prompt string
+}
+
 // ASRTranscriber produces transcriptions from audio samples.
 type ASRTranscriber interface {
-	Transcribe(ctx context.Context, samples []float32) (*ASRResult, error)
+	Transcribe(ctx context.Context, samples []float32, opts ASROptions) (*ASRResult, error)
 }
 
 // ASRResult holds the transcription output.
@@ -38,12 +43,12 @@ func NewASRRouter(backends map[string]ASRTranscriber, fallback string) *ASRRoute
 }
 
 // Transcribe routes to the correct backend and transcribes the audio.
-func (r *ASRRouter) Transcribe(ctx context.Context, samples []float32, engine string) (*ASRResult, error) {
+func (r *ASRRouter) Transcribe(ctx context.Context, samples []float32, engine string, opts ASROptions) (*ASRResult, error) {
 	backend, err := r.Route(engine)
 	if err != nil {
 		return nil, err
 	}
-	return backend.Transcribe(ctx, samples)
+	return backend.Transcribe(ctx, samples, opts)
 }
 
 // MultipartASRClient sends audio as multipart WAV to any whisper-compatible HTTP endpoint.
@@ -69,10 +74,15 @@ func NewASRClient(url string, poolSize int, prompt string) *MultipartASRClient {
 }
 
 // Transcribe sends float32 audio samples (16kHz mono) as multipart WAV and returns the transcript.
-func (c *MultipartASRClient) Transcribe(ctx context.Context, samples []float32) (*ASRResult, error) {
+func (c *MultipartASRClient) Transcribe(ctx context.Context, samples []float32, opts ASROptions) (*ASRResult, error) {
 	start := time.Now()
 
-	body, contentType, err := buildMultipartAudio(samples, c.prompt)
+	prompt := c.prompt
+	if opts.Prompt != "" {
+		prompt = opts.Prompt
+	}
+
+	body, contentType, err := buildMultipartAudio(samples, prompt)
 	if err != nil {
 		return nil, err
 	}
