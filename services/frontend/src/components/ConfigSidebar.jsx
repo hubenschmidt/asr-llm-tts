@@ -13,54 +13,54 @@ export const ConfigSidebar = (props) => {
       <GPUPanel onUnloadAll={on.unloadAll} />
 
       <div class="model-column">
-        {/* STT Engine */}
+        {/* ASR Engine */}
         <div class="model-group">
           <label class="label">
-            <StatusDot color={on.sttDotColor()} />
-            STT Engine
+            <StatusDot color={on.asrDotColor()} />
+            ASR Engine
             <Tooltip text="Speech-to-text engine. whisper-server uses GPU acceleration via whisper.cpp." />
           </label>
           <div class="model-row-inner">
             <select
-              value={c.sttEngine()}
-              onChange={on.sttChange}
+              value={c.asrEngine()}
+              onChange={on.asrChange}
               class="select"
-              disabled={c.isStreaming() || c.loadingSTT()}
+              disabled={c.isStreaming() || c.loadingASR()}
             >
-              <Show when={!c.sttEngine()}>
+              <Show when={!c.asrEngine()}>
                 <option value="">Select engine...</option>
               </Show>
               <optgroup label="whisper-server (GPU)">
                 <option value="whisper-server">whisper-server (GPU)</option>
               </optgroup>
             </select>
-            <Show when={c.loadingSTT()}>
+            <Show when={c.loadingASR()}>
               <span class="spinner" />
             </Show>
             <button
               class="unload-btn"
-              disabled={c.isStreaming() || c.loadingSTT() || !c.sttEngine()}
-              onClick={on.unloadSTT}
+              disabled={c.isStreaming() || c.loadingASR() || !c.asrEngine()}
+              onClick={on.unloadASR}
             >
               Unload
             </button>
           </div>
         </div>
 
-        {/* STT Model (whisper-server only) */}
-        <Show when={c.sttEngine() === "whisper-server" && c.sttModels().length > 0}>
+        {/* ASR Model (whisper-server only) */}
+        <Show when={c.asrEngine() === "whisper-server" && c.asrModels().length > 0}>
           <div class="model-group">
-            <label class="label">STT Model</label>
+            <label class="label">ASR Model</label>
             <select
-              value={c.sttModel()}
-              onChange={on.sttModelChange}
+              value={c.asrModel()}
+              onChange={on.asrModelChange}
               class="select"
-              disabled={c.isStreaming() || c.loadingSTT()}
+              disabled={c.isStreaming() || c.loadingASR()}
             >
-              <Show when={!c.sttModel()}>
+              <Show when={!c.asrModel()}>
                 <option value="">Select model...</option>
               </Show>
-              <For each={c.sttModels()}>
+              <For each={c.asrModels()}>
                 {(m) => (
                   <option value={m.name} disabled={!m.downloaded}>
                     {m.name.replace("ggml-", "").replace(".bin", "")}
@@ -69,18 +69,18 @@ export const ConfigSidebar = (props) => {
                 )}
               </For>
             </select>
-            <div class="stt-model-list">
-              <For each={c.sttModels().filter((m) => !m.downloaded)}>
+            <div class="asr-model-list">
+              <For each={c.asrModels().filter((m) => !m.downloaded)}>
                 {(m) => (
-                  <div class="stt-model-download-row">
-                    <span class="stt-model-name">{m.name.replace("ggml-", "").replace(".bin", "")}</span>
+                  <div class="asr-model-download-row">
+                    <span class="asr-model-name">{m.name.replace("ggml-", "").replace(".bin", "")}</span>
                     <Show
                       when={c.downloadingModel() === m.name && c.downloadProgress()}
                       fallback={
                         <button
                           class="unload-btn"
                           disabled={!!c.downloadingModel()}
-                          onClick={() => on.sttModelDownload(m.name)}
+                          onClick={() => on.asrModelDownload(m.name)}
                         >
                           {c.downloadingModel() === m.name ? "Starting..." : "Download"}
                         </button>

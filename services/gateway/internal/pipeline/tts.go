@@ -12,9 +12,15 @@ import (
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/metrics"
 )
 
+// TTSOptions holds per-call TTS tuning parameters.
+type TTSOptions struct {
+	Speed float64
+	Voice string
+}
+
 // TTSSynthesizer produces audio from text.
 type TTSSynthesizer interface {
-	SynthesizeAudio(ctx context.Context, text string) ([]byte, error)
+	SynthesizeAudio(ctx context.Context, text string, opts TTSOptions) ([]byte, error)
 }
 
 // TTSResult holds synthesized audio with timing.
@@ -35,7 +41,7 @@ func NewTTSRouter(backends map[string]TTSSynthesizer, fallback string) *TTSRoute
 }
 
 // Synthesize routes to the correct backend, synthesizes audio, and records latency metrics.
-func (r *TTSRouter) Synthesize(ctx context.Context, text, engine string) (*TTSResult, error) {
+func (r *TTSRouter) Synthesize(ctx context.Context, text, engine string, opts TTSOptions) (*TTSResult, error) {
 	start := time.Now()
 
 	backend, err := r.Route(engine)
@@ -43,7 +49,7 @@ func (r *TTSRouter) Synthesize(ctx context.Context, text, engine string) (*TTSRe
 		return nil, err
 	}
 
-	audioData, err := backend.SynthesizeAudio(ctx, text)
+	audioData, err := backend.SynthesizeAudio(ctx, text, opts)
 	if err != nil {
 		metrics.Errors.WithLabelValues("tts", "synth").Inc()
 		return nil, err
@@ -70,11 +76,15 @@ func NewPiperSynthesizer(url, voice string, client *http.Client) TTSSynthesizer 
 	return &piperSynthesizer{url: url, voice: voice, client: client}
 }
 
-func (p *piperSynthesizer) SynthesizeAudio(ctx context.Context, text string) ([]byte, error) {
+func (p *piperSynthesizer) SynthesizeAudio(ctx context.Context, text string, opts TTSOptions) ([]byte, error) {
+	voice := p.voice
+	if opts.Voice != "" {
+		voice = opts.Voice
+	}
 	body, err := json.Marshal(struct {
 		Text  string `json:"text"`
 		Voice string `json:"voice"`
-	}{Text: text, Voice: p.voice})
+	}{Text: text, Voice: voice})
 	if err != nil {
 		return nil, fmt.Errorf("marshal piper request: %w", err)
 	}
@@ -101,13 +111,18 @@ func NewOpenAISynthesizer(url, model, voice string, client *http.Client) TTSSynt
 	return &openaiSynthesizer{url: url, model: model, voice: voice, client: client}
 }
 
-func (o *openaiSynthesizer) SynthesizeAudio(ctx context.Context, text string) ([]byte, error) {
+func (o *openaiSynthesizer) SynthesizeAudio(ctx context.Context, text string, opts TTSOptions) ([]byte, error) {
+	voice := o.voice
+	if opts.Voice != "" {
+		voice = opts.Voice
+	}
 	body, err := json.Marshal(struct {
-		Input          string `json:"input"`
-		Model          string `json:"model"`
-		Voice          string `json:"voice"`
-		ResponseFormat string `json:"response_format"`
-	}{Input: text, Model: o.model, Voice: o.voice, ResponseFormat: "wav"})
+		Input          string  `json:"input"`
+		Model          string  `json:"model"`
+		Voice          string  `json:"voice"`
+		Speed          float64 `json:"speed,omitempty"`
+		ResponseFormat string  `json:"response_format"`
+	}{Input: text, Model: o.model, Voice: voice, Speed: opts.Speed, ResponseFormat: "wav"})
 	if err != nil {
 		return nil, fmt.Errorf("marshal openai tts request: %w", err)
 	}
@@ -134,7 +149,7 @@ func NewElevenLabsSynthesizer(apiKey, voiceID, modelID string, client *http.Clie
 	return &elevenlabsSynthesizer{apiKey: apiKey, voiceID: voiceID, modelID: modelID, client: client}
 }
 
-func (e *elevenlabsSynthesizer) SynthesizeAudio(ctx context.Context, text string) ([]byte, error) {
+func (e *elevenlabsSynthesizer) SynthesizeAudio(ctx context.Context, text string, _ TTSOptions) ([]byte, error) {
 	body, err := json.Marshal(struct {
 		Text    string `json:"text"`
 		ModelID string `json:"model_id"`
@@ -166,13 +181,17 @@ func NewMeloSynthesizer(url string, client *http.Client) TTSSynthesizer {
 	return &meloSynthesizer{url: url, client: client}
 }
 
-func (m *meloSynthesizer) SynthesizeAudio(ctx context.Context, text string) ([]byte, error) {
+func (m *meloSynthesizer) SynthesizeAudio(ctx context.Context, text string, opts TTSOptions) ([]byte, error) {
+	speed := opts.Speed
+	if speed <= 0 {
+		speed = 1.0
+	}
 	body, err := json.Marshal(struct {
 		Text      string  `json:"text"`
 		Speed     float64 `json:"speed"`
 		Language  string  `json:"language"`
 		SpeakerID string  `json:"speaker_id"`
-	}{Text: text, Speed: 1.0, Language: "EN", SpeakerID: "EN-Default"})
+	}{Text: text, Speed: speed, Language: "EN", SpeakerID: "EN-Default"})
 	if err != nil {
 		return nil, fmt.Errorf("marshal melo request: %w", err)
 	}

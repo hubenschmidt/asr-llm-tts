@@ -39,7 +39,7 @@ export const useAudioStream = (opts) => {
         sample_rate: sampleRate,
         audio_bandwidth: opts.audioBandwidth?.() || "wideband",
         tts_engine: opts.ttsEngine(),
-        stt_engine: opts.sttEngine(),
+        asr_engine: opts.asrEngine(),
         system_prompt: opts.systemPrompt(),
         llm_model: opts.llmModel(),
         llm_engine: opts.llmEngine(),
@@ -47,6 +47,9 @@ export const useAudioStream = (opts) => {
         asr_prompt: opts.asrPrompt?.() || "",
         confidence_threshold: opts.confidenceThreshold?.() ?? 0.6,
         reference_transcript: opts.referenceTranscript?.() || "",
+        tts_speed: opts.ttsSpeed?.() ?? 1.0,
+        text_normalization: opts.textNormalization?.() ?? true,
+        inter_sentence_pause_ms: opts.interSentencePauseMs?.() ?? 0,
       };
       if (mode) meta.mode = mode;
       socket.send(JSON.stringify(meta));
@@ -70,6 +73,9 @@ export const useAudioStream = (opts) => {
             llm_ms: event.llm_ms ?? 0,
             tts_ms: event.tts_ms ?? 0,
             total_ms: event.total_ms ?? 0,
+            no_speech_prob: event.no_speech_prob ?? null,
+            wer: event.wer ?? null,
+            noise_suppressed: event.noise_suppressed ?? false,
           }),
         error: () => opts.onError(event.text ?? "unknown error"),
       };

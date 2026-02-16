@@ -508,15 +508,15 @@
   font-weight: 400;
 }
 
-/* === STT model download list === */
-.stt-model-list {
+/* === ASR model download list === */
+.asr-model-list {
   margin-top: 8px;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.stt-model-download-row {
+.asr-model-download-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -524,7 +524,7 @@
   padding: 3px 0;
 }
 
-.stt-model-name { color: #4a6880; }
+.asr-model-name { color: #4a6880; }
 
 /* === Download progress === */
 .download-progress {
@@ -645,7 +645,7 @@
   border-color: #00b8d4;
 }
 
-/* === STT Tuning section === */
+/* === Tuning section === */
 .tuning-section {
   display: flex;
   flex-direction: column;

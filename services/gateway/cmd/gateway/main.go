@@ -105,7 +105,7 @@ func main() {
 	// Service orchestrator
 	svcRegistry := orchestrator.NewRegistry(map[string]orchestrator.ServiceMeta{
 		"whisper-server": {
-			Category:   "stt",
+			Category:   "asr",
 			HealthURL:  whisperServerURL,
 			ControlURL: whisperControlURL,
 		},

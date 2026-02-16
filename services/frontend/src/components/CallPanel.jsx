@@ -10,8 +10,8 @@ import {
   fetchServices as apiFetchServices,
   startService as apiStartService,
   stopService as apiStopService,
-  fetchSTTModels as apiFetchSTTModels,
-  downloadSTTModel as apiDownloadSTTModel,
+  fetchASRModels as apiFetchASRModels,
+  downloadASRModel as apiDownloadASRModel,
 } from "../api/services";
 import { warmupTTS } from "../api/tts";
 import "../style/call-panel.css";
@@ -49,7 +49,7 @@ const MODEL_ENGINE_MAP = Object.entries(CLOUD_MODELS).reduce((map, [engine, mode
 
 export const CallPanel = () => {
   const [ttsEngine, _setTtsEngine] = createSignal(localStorage.getItem("ttsEngine") || "");
-  const [sttEngine, setSttEngine] = createSignal("");
+  const [asrEngine, setAsrEngine] = createSignal("");
   const [promptPreset, setPromptPreset] = createSignal(localStorage.getItem("promptPreset") || "general");
   const [systemPrompt, setSystemPrompt] = createSignal(localStorage.getItem("systemPrompt") || PROMPT_PRESETS.general);
   const [llmModel, _setLlmModel] = createSignal("");
@@ -68,7 +68,7 @@ export const CallPanel = () => {
   };
 
   const modelToEngine = (model) => MODEL_ENGINE_MAP[model] || "ollama";
-  const [loadingSTT, setLoadingSTT] = createSignal(false);
+  const [loadingASR, setLoadingASR] = createSignal(false);
   const [loadingLLM, setLoadingLLM] = createSignal(false);
   const [loadingTTS, setLoadingTTS] = createSignal(false);
   const [availableTTS, setAvailableTTS] = createSignal([]);
@@ -82,8 +82,8 @@ export const CallPanel = () => {
   const [micLevel, setMicLevel] = createSignal(0);
   const [serviceStatuses, setServiceStatuses] = createSignal({});
   const [soundChecking, setSoundChecking] = createSignal(false);
-  const [sttModels, setSttModels] = createSignal([]);
-  const [sttModel, _setSttModel] = createSignal(localStorage.getItem("sttModel") || "");
+  const [asrModels, setAsrModels] = createSignal([]);
+  const [asrModel, _setAsrModel] = createSignal(localStorage.getItem("asrModel") || "");
   const [downloadingModel, setDownloadingModel] = createSignal("");
   const [downloadProgress, setDownloadProgress] = createSignal(null);
   const [mode, setMode] = createSignal(localStorage.getItem("callMode") || "talk");
@@ -94,7 +94,7 @@ export const CallPanel = () => {
   const [leftCollapsed, setLeftCollapsed] = createSignal(false);
   const [rightCollapsed, setRightCollapsed] = createSignal(false);
 
-  // STT tuning signals (localStorage-persisted)
+  // ASR tuning signals (localStorage-persisted)
   const [noiseSuppression, _setNoiseSuppression] = createSignal(localStorage.getItem("noiseSuppression") === "true");
   const [asrPrompt, _setAsrPrompt] = createSignal(localStorage.getItem("asrPrompt") || "");
   const [confidenceThreshold, _setConfidenceThreshold] = createSignal(parseFloat(localStorage.getItem("confidenceThreshold")) || 0.6);
@@ -104,7 +104,15 @@ export const CallPanel = () => {
   const setConfidenceThreshold = (v) => { _setConfidenceThreshold(v); localStorage.setItem("confidenceThreshold", v); };
   const setReferenceTranscript = (v) => { _setReferenceTranscript(v); localStorage.setItem("referenceTranscript", v); };
 
-  const setSttModel = (v) => { _setSttModel(v); localStorage.setItem("sttModel", v); };
+  // TTS tuning signals (localStorage-persisted)
+  const [ttsSpeed, _setTtsSpeed] = createSignal(parseFloat(localStorage.getItem("ttsSpeed")) || 1.0);
+  const [textNormalization, _setTextNormalization] = createSignal(localStorage.getItem("textNormalization") !== "false");
+  const [interSentencePauseMs, _setInterSentencePauseMs] = createSignal(parseInt(localStorage.getItem("interSentencePauseMs")) || 0);
+  const setTtsSpeed = (v) => { _setTtsSpeed(v); localStorage.setItem("ttsSpeed", v); };
+  const setTextNormalization = (v) => { _setTextNormalization(v); localStorage.setItem("textNormalization", v); };
+  const setInterSentencePauseMs = (v) => { _setInterSentencePauseMs(v); localStorage.setItem("interSentencePauseMs", v); };
+
+  const setAsrModel = (v) => { _setAsrModel(v); localStorage.setItem("asrModel", v); };
 
   let playAudioCtx = null;
   let playAt = 0;
@@ -171,7 +179,7 @@ export const CallPanel = () => {
       .catch(() => {});
   };
 
-  const SERVICE_TO_STT = {
+  const SERVICE_TO_ASR = {
     "whisper-server": "whisper-server",
   };
 
@@ -179,22 +187,22 @@ export const CallPanel = () => {
     apiFetchServices()
       .then((data) => {
         setServiceStatuses(Object.fromEntries(data.map((svc) => [svc.name, svc.status])));
-        if (sttEngine()) return;
-        const healthySTT = data
-          .filter((svc) => svc.category === "stt")
+        if (asrEngine()) return;
+        const healthyASR = data
+          .filter((svc) => svc.category === "asr")
           .filter((svc) => svc.status === "healthy" || svc.status === "running")
-          .map((svc) => SERVICE_TO_STT[svc.name])
+          .map((svc) => SERVICE_TO_ASR[svc.name])
           .find((engine) => engine);
-        if (healthySTT) setSttEngine(healthySTT);
+        if (healthyASR) setAsrEngine(healthyASR);
       })
       .catch(() => {});
   };
 
-  const fetchSTTModels = () => {
-    apiFetchSTTModels()
+  const fetchASRModels = () => {
+    apiFetchASRModels()
       .then((data) => {
-        setSttModels(data.models || []);
-        if (!sttModel() && data.active) setSttModel(data.active);
+        setAsrModels(data.models || []);
+        if (!asrModel() && data.active) setAsrModel(data.active);
       })
       .catch(() => {});
   };
@@ -202,7 +210,7 @@ export const CallPanel = () => {
   onMount(() => {
     fetchModels();
     fetchServices();
-    fetchSTTModels();
+    fetchASRModels();
   });
 
   const startService = async (serviceName, params) => {
@@ -223,10 +231,10 @@ export const CallPanel = () => {
 
   const serviceColor = (svc) => STATUS_COLORS[serviceStatuses()[svc]] ?? RED;
 
-  const sttDotColor = () => {
-    if (!sttEngine()) return RED;
-    if (loadingSTT()) return YELLOW;
-    const svc = ENGINE_TO_SERVICE[sttEngine()];
+  const asrDotColor = () => {
+    if (!asrEngine()) return RED;
+    if (loadingASR()) return YELLOW;
+    const svc = ENGINE_TO_SERVICE[asrEngine()];
     if (!svc) return GREEN;
     return serviceColor(svc);
   };
@@ -259,7 +267,7 @@ export const CallPanel = () => {
 
   const { isStreaming, isRecording, startMic, startSnippet, pauseRecording, resumeRecording, processSnippet, startFile, stop, sendChat } = useAudioStream({
     ttsEngine,
-    sttEngine,
+    asrEngine,
     systemPrompt,
     llmModel,
     llmEngine,
@@ -269,6 +277,9 @@ export const CallPanel = () => {
     asrPrompt,
     confidenceThreshold,
     referenceTranscript,
+    ttsSpeed,
+    textNormalization,
+    interSentencePauseMs,
     onTranscript: (text) =>
       setTranscripts((prev) => [...prev, { role: "user", text }]),
     onLLMToken: (token) => setLlmResponse((prev) => prev + token),
@@ -287,46 +298,46 @@ export const CallPanel = () => {
     onLevel: setMicLevel,
   });
 
-  const handleSTTChange = (e) => {
+  const handleASRChange = (e) => {
     const engine = e.target.value;
-    const prevSvc = ENGINE_TO_SERVICE[sttEngine()];
-    setSttEngine(engine);
+    const prevSvc = ENGINE_TO_SERVICE[asrEngine()];
+    setAsrEngine(engine);
     const svc = ENGINE_TO_SERVICE[engine];
     const unload = prevSvc && prevSvc !== svc ? stopService(prevSvc) : Promise.resolve();
     if (!svc || serviceStatuses()[svc] === "healthy") {
       unload.catch(() => {});
       return;
     }
-    setLoadingSTT(true);
-    const modelParam = sttModel() ? `model=${sttModel()}` : "";
+    setLoadingASR(true);
+    const modelParam = asrModel() ? `model=${asrModel()}` : "";
     unload
       .then(() => startService(svc, modelParam))
       .catch((err) =>
-        setError(`STT start failed: ${err instanceof Error ? err.message : err}`),
+        setError(`ASR start failed: ${err instanceof Error ? err.message : err}`),
       )
-      .finally(() => setLoadingSTT(false));
+      .finally(() => setLoadingASR(false));
   };
 
-  const handleSTTModelChange = (e) => {
+  const handleASRModelChange = (e) => {
     const model = e.target.value;
     if (!model) return;
-    setSttModel(model);
-    const svc = ENGINE_TO_SERVICE[sttEngine()];
+    setAsrModel(model);
+    const svc = ENGINE_TO_SERVICE[asrEngine()];
     if (!svc) return;
-    setLoadingSTT(true);
+    setLoadingASR(true);
     stopService(svc)
       .then(() => startService(svc, `model=${model}`))
       .catch((err) =>
-        setError(`STT model switch failed: ${err instanceof Error ? err.message : err}`),
+        setError(`ASR model switch failed: ${err instanceof Error ? err.message : err}`),
       )
-      .finally(() => setLoadingSTT(false));
+      .finally(() => setLoadingASR(false));
   };
 
-  const handleSTTModelDownload = (name) => {
+  const handleASRModelDownload = (name) => {
     setDownloadingModel(name);
     setDownloadProgress(null);
-    apiDownloadSTTModel(name, (bytes, total) => setDownloadProgress({ bytes, total }))
-      .then(() => fetchSTTModels())
+    apiDownloadASRModel(name, (bytes, total) => setDownloadProgress({ bytes, total }))
+      .then(() => fetchASRModels())
       .catch((err) =>
         setError(`Download failed: ${err instanceof Error ? err.message : err}`),
       )
@@ -367,16 +378,16 @@ export const CallPanel = () => {
       .finally(() => setLoadingTTS(false));
   };
 
-  const handleUnloadSTT = () => {
-    const svc = ENGINE_TO_SERVICE[sttEngine()];
-    if (!svc) { setSttEngine(""); return; }
-    setLoadingSTT(true);
+  const handleUnloadASR = () => {
+    const svc = ENGINE_TO_SERVICE[asrEngine()];
+    if (!svc) { setAsrEngine(""); return; }
+    setLoadingASR(true);
     stopService(svc)
-      .then(() => setSttEngine(""))
+      .then(() => setAsrEngine(""))
       .catch((err) =>
-        setError(`STT stop failed: ${err instanceof Error ? err.message : err}`),
+        setError(`ASR stop failed: ${err instanceof Error ? err.message : err}`),
       )
-      .finally(() => setLoadingSTT(false));
+      .finally(() => setLoadingASR(false));
   };
 
   const handleUnloadLLM = () => {
@@ -398,7 +409,7 @@ export const CallPanel = () => {
   const handleUnloadAll = () => {
     unloadAllGPU()
       .then(() => {
-        setSttEngine("");
+        setAsrEngine("");
         setLlmModel("");
         setTtsEngine("");
         setServiceStatuses({});
@@ -422,26 +433,26 @@ export const CallPanel = () => {
   };
 
   const configProps = {
-    sttEngine, sttModel, sttModels, llmEngine, llmModel, allLLMModels, ttsEngine,
-    availableTTS, loadingSTT, loadingLLM, loadingTTS, isStreaming,
+    asrEngine, asrModel, asrModels, llmEngine, llmModel, allLLMModels, ttsEngine,
+    availableTTS, loadingASR, loadingLLM, loadingTTS, isStreaming,
     systemPrompt, promptPreset, serviceStatuses, downloadingModel, downloadProgress,
     audioBandwidth, bandwidthModes,
   };
 
   const configHandlers = {
-    sttChange: handleSTTChange,
-    sttModelChange: handleSTTModelChange,
-    sttModelDownload: handleSTTModelDownload,
+    asrChange: handleASRChange,
+    asrModelChange: handleASRModelChange,
+    asrModelDownload: handleASRModelDownload,
     llmModelChange: handleLLMModelChange,
     ttsChange: handleTTSChange,
-    unloadSTT: handleUnloadSTT,
+    unloadASR: handleUnloadASR,
     unloadLLM: handleUnloadLLM,
     unloadTTS: handleUnloadTTS,
     unloadAll: handleUnloadAll,
     bandwidthChange: (e) => setAudioBandwidth(e.target.value),
     systemPromptChange: handleSystemPromptChange,
     promptPresetChange: handlePromptPreset,
-    sttDotColor,
+    asrDotColor,
     llmDotColor,
     ttsDotColor,
   };
@@ -512,9 +523,9 @@ export const CallPanel = () => {
             placeholder="System prompt..."
           />
         </div>
-        <Show when={sttEngine()}>
+        <Show when={asrEngine()}>
           <div class="model-group" style={{ "margin-top": "12px" }}>
-            <label class="label">STT Tuning</label>
+            <label class="label">ASR Tuning</label>
             <div class="tuning-section">
               <label class="tuning-row">
                 <input
@@ -555,6 +566,47 @@ export const CallPanel = () => {
                 onInput={(e) => setReferenceTranscript(e.target.value)}
                 disabled={isStreaming()}
                 placeholder="Ground truth for WER eval…"
+              />
+            </div>
+          </div>
+        </Show>
+        <Show when={ttsEngine()}>
+          <div class="model-group" style={{ "margin-top": "12px" }}>
+            <label class="label">TTS Tuning</label>
+            <div class="tuning-section">
+              <label class="tuning-label">
+                Speed: {ttsSpeed().toFixed(2)}x
+                <Tooltip text="Speech rate multiplier. Lower = slower, higher = faster. Supported by MeloTTS and OpenAI-compatible backends." />
+              </label>
+              <input
+                type="range"
+                class="tuning-range"
+                min="0.75" max="1.5" step="0.05"
+                value={ttsSpeed()}
+                onInput={(e) => setTtsSpeed(parseFloat(e.target.value))}
+                disabled={isStreaming()}
+              />
+              <label class="tuning-row">
+                <input
+                  type="checkbox"
+                  checked={textNormalization()}
+                  onChange={(e) => setTextNormalization(e.target.checked)}
+                  disabled={isStreaming()}
+                />
+                <span>Text normalization</span>
+                <Tooltip text="Expand numbers, currency, and abbreviations into spoken form before synthesis. E.g. '$5.50' becomes 'five dollars and fifty cents'." />
+              </label>
+              <label class="tuning-label">
+                Sentence pause: {interSentencePauseMs()}ms
+                <Tooltip text="Silence gap inserted between sentences for more natural pacing. 0 = no pause." />
+              </label>
+              <input
+                type="range"
+                class="tuning-range"
+                min="0" max="500" step="50"
+                value={interSentencePauseMs()}
+                onInput={(e) => setInterSentencePauseMs(parseInt(e.target.value))}
+                disabled={isStreaming()}
               />
             </div>
           </div>

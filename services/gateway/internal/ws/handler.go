@@ -55,15 +55,18 @@ type callMetadata struct {
 	Codec               string  `json:"codec"`
 	SampleRate          int     `json:"sample_rate"`
 	TTSEngine           string  `json:"tts_engine"`
-	STTEngine           string  `json:"stt_engine"`
+	ASREngine           string  `json:"asr_engine"`
 	SystemPrompt        string  `json:"system_prompt"`
 	LLMModel            string  `json:"llm_model"`
 	LLMEngine           string  `json:"llm_engine"`
 	Mode                string  `json:"mode"`
-	NoiseSuppression    bool    `json:"noise_suppression"`
-	ASRPrompt           string  `json:"asr_prompt"`
-	ConfidenceThreshold float64 `json:"confidence_threshold"`
-	ReferenceTranscript string  `json:"reference_transcript"`
+	NoiseSuppression     bool    `json:"noise_suppression"`
+	ASRPrompt            string  `json:"asr_prompt"`
+	ConfidenceThreshold  float64 `json:"confidence_threshold"`
+	ReferenceTranscript  string  `json:"reference_transcript"`
+	TTSSpeed             float64 `json:"tts_speed"`
+	TextNormalization    *bool   `json:"text_normalization"`
+	InterSentencePauseMs int     `json:"inter_sentence_pause_ms"`
 }
 
 // wsAction is a text frame sent during a session (chat message, snippet process, etc).
@@ -112,9 +115,9 @@ func (h *Handler) runSession(conn *websocket.Conn) {
 	if ttsEngine == "" {
 		ttsEngine = "fast"
 	}
-	sttEngine := meta.STTEngine
-	if sttEngine == "" {
-		sttEngine = "whisper.cpp"
+	asrEngine := meta.ASREngine
+	if asrEngine == "" {
+		asrEngine = "whisper.cpp"
 	}
 
 	sampleRate := meta.SampleRate
@@ -144,28 +147,42 @@ func (h *Handler) runSession(conn *websocket.Conn) {
 		confidenceThreshold = 0.6
 	}
 
-	slog.Info("call started", "session_id", sessionID, "codec", codec, "sample_rate", sampleRate, "tts_engine", ttsEngine, "stt_engine", sttEngine, "llm_engine", llmEngine, "mode", mode, "noise_suppression", meta.NoiseSuppression, "confidence_threshold", confidenceThreshold)
+	ttsSpeed := meta.TTSSpeed
+	if ttsSpeed <= 0 {
+		ttsSpeed = 1.0
+	}
+
+	textNorm := true
+	if meta.TextNormalization != nil {
+		textNorm = *meta.TextNormalization
+	}
+
+	slog.Info("call started", "session_id", sessionID, "codec", codec, "sample_rate", sampleRate, "tts_engine", ttsEngine, "asr_engine", asrEngine, "llm_engine", llmEngine, "mode", mode, "noise_suppression", meta.NoiseSuppression, "confidence_threshold", confidenceThreshold, "tts_speed", ttsSpeed)
 
 	pipe := pipeline.New(pipeline.Config{
-		ASRClient:           h.cfg.ASRClient,
-		LLMClient:           h.cfg.LLMClient,
-		TTSClient:           h.cfg.TTSClient,
-		VADConfig:           h.cfg.VADConfig,
-		RAGClient:           h.cfg.RAGClient,
-		CallHistory:         h.cfg.CallHistory,
-		NoiseClient:         noiseClient,
-		SessionID:           sessionID,
-		SystemPrompt:        systemPrompt,
-		LLMModel:            meta.LLMModel,
-		LLMEngine:           llmEngine,
-		ASRPrompt:           meta.ASRPrompt,
-		ConfidenceThreshold: confidenceThreshold,
-		ReferenceTranscript: meta.ReferenceTranscript,
+		ASRClient:            h.cfg.ASRClient,
+		LLMClient:            h.cfg.LLMClient,
+		TTSClient:            h.cfg.TTSClient,
+		VADConfig:            h.cfg.VADConfig,
+		RAGClient:            h.cfg.RAGClient,
+		CallHistory:          h.cfg.CallHistory,
+		NoiseClient:          noiseClient,
+		NoiseSuppression:     meta.NoiseSuppression,
+		SessionID:            sessionID,
+		SystemPrompt:         systemPrompt,
+		LLMModel:             meta.LLMModel,
+		LLMEngine:            llmEngine,
+		ASRPrompt:            meta.ASRPrompt,
+		ConfidenceThreshold:  confidenceThreshold,
+		ReferenceTranscript:  meta.ReferenceTranscript,
+		TTSSpeed:             ttsSpeed,
+		TextNormalization:    textNorm,
+		InterSentencePauseMs: meta.InterSentencePauseMs,
 	})
 
 	sendEvent := newEventSender(conn)
-	processMessages(ctx, conn, pipe, codec, sampleRate, ttsEngine, sttEngine, sendEvent, mode)
-	flushIfNeeded(ctx, mode, pipe, ttsEngine, sttEngine, sendEvent)
+	processMessages(ctx, conn, pipe, codec, sampleRate, ttsEngine, asrEngine, sendEvent, mode)
+	flushIfNeeded(ctx, mode, pipe, ttsEngine, asrEngine, sendEvent)
 
 	slog.Info("call ended")
 }
@@ -173,20 +190,20 @@ func (h *Handler) runSession(conn *websocket.Conn) {
 // processMessages reads frames from the WebSocket in a loop.
 // Text frames carry actions (chat, process) and are handled in all modes.
 // Binary frames are mode-specific: talk=VAD, snippet=buffer, text=ignored.
-func processMessages(ctx context.Context, conn *websocket.Conn, pipe *pipeline.Pipeline, codec audio.Codec, sampleRate int, ttsEngine, sttEngine string, sendEvent pipeline.EventCallback, mode string) {
+func processMessages(ctx context.Context, conn *websocket.Conn, pipe *pipeline.Pipeline, codec audio.Codec, sampleRate int, ttsEngine, asrEngine string, sendEvent pipeline.EventCallback, mode string) {
 	for {
 		msgType, data, err := conn.ReadMessage()
 		if err != nil {
 			slog.Info("connection closed", "error", err)
 			return
 		}
-		handleOneMessage(ctx, msgType, data, pipe, codec, sampleRate, ttsEngine, sttEngine, sendEvent, mode)
+		handleOneMessage(ctx, msgType, data, pipe, codec, sampleRate, ttsEngine, asrEngine, sendEvent, mode)
 	}
 }
 
-func handleOneMessage(ctx context.Context, msgType int, data []byte, pipe *pipeline.Pipeline, codec audio.Codec, sampleRate int, ttsEngine, sttEngine string, sendEvent pipeline.EventCallback, mode string) {
+func handleOneMessage(ctx context.Context, msgType int, data []byte, pipe *pipeline.Pipeline, codec audio.Codec, sampleRate int, ttsEngine, asrEngine string, sendEvent pipeline.EventCallback, mode string) {
 	if msgType == websocket.TextMessage {
-		handleTextFrame(ctx, data, pipe, ttsEngine, sttEngine, sendEvent, mode)
+		handleTextFrame(ctx, data, pipe, ttsEngine, asrEngine, sendEvent, mode)
 		return
 	}
 	if msgType != websocket.BinaryMessage {
@@ -203,22 +220,22 @@ func handleOneMessage(ctx context.Context, msgType int, data []byte, pipe *pipel
 		return
 	}
 	// talk mode (default): VAD processing
-	if err := pipe.ProcessChunk(ctx, data, codec, sampleRate, ttsEngine, sttEngine, sendEvent); err != nil {
+	if err := pipe.ProcessChunk(ctx, data, codec, sampleRate, ttsEngine, asrEngine, sendEvent); err != nil {
 		slog.Error("process chunk", "error", err)
 		sendEvent(pipeline.Event{Type: "error", Text: err.Error()})
 	}
 }
 
-func flushIfNeeded(ctx context.Context, mode string, pipe *pipeline.Pipeline, ttsEngine, sttEngine string, sendEvent pipeline.EventCallback) {
+func flushIfNeeded(ctx context.Context, mode string, pipe *pipeline.Pipeline, ttsEngine, asrEngine string, sendEvent pipeline.EventCallback) {
 	if mode == "snippet" || mode == "text" {
 		return
 	}
-	if err := pipe.Flush(ctx, ttsEngine, sttEngine, sendEvent); err != nil {
+	if err := pipe.Flush(ctx, ttsEngine, asrEngine, sendEvent); err != nil {
 		slog.Error("flush", "error", err)
 	}
 }
 
-func handleTextFrame(ctx context.Context, data []byte, pipe *pipeline.Pipeline, ttsEngine, sttEngine string, sendEvent pipeline.EventCallback, mode string) {
+func handleTextFrame(ctx context.Context, data []byte, pipe *pipeline.Pipeline, ttsEngine, asrEngine string, sendEvent pipeline.EventCallback, mode string) {
 	var act wsAction
 	if err := json.Unmarshal(data, &act); err != nil {
 		return
@@ -233,7 +250,7 @@ func handleTextFrame(ctx context.Context, data []byte, pipe *pipeline.Pipeline, 
 	}
 
 	if act.Action == "process" && mode == "snippet" {
-		if err := pipe.ProcessBuffered(ctx, ttsEngine, sttEngine, sendEvent); err != nil {
+		if err := pipe.ProcessBuffered(ctx, ttsEngine, asrEngine, sendEvent); err != nil {
 			slog.Error("process buffered", "error", err)
 			sendEvent(pipeline.Event{Type: "error", Text: err.Error()})
 		}

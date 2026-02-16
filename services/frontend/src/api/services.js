@@ -9,8 +9,8 @@ export const startService = (name, params) =>
 export const stopService = (name) =>
   client.post(`/services/${name}/stop`).then((r) => r.data);
 
-export const fetchSTTModels = () =>
-  client.get("/stt/models").then((r) => r.data);
+export const fetchASRModels = () =>
+  client.get("/asr/models").then((r) => r.data);
 
 const processNDJSONLines = (lines, onProgress) => {
   const parsed = lines.filter((l) => l.trim()).map((l) => JSON.parse(l));
@@ -20,8 +20,8 @@ const processNDJSONLines = (lines, onProgress) => {
   return parsed.find((m) => m.status === "done") ?? null;
 };
 
-export const downloadSTTModel = async (name, onProgress) => {
-  const resp = await fetch("/api/stt/models/download", {
+export const downloadASRModel = async (name, onProgress) => {
+  const resp = await fetch("/api/asr/models/download", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),

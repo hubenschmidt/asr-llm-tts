@@ -34,7 +34,7 @@ export const ExplainPanel = (props) => {
         codec: "pcm",
         sample_rate: 48000,
         tts_engine: "",
-        stt_engine: "",
+        asr_engine: "",
         system_prompt: EXPLAIN_PROMPT,
         llm_model: props.llmModel(),
         llm_engine: props.llmEngine(),

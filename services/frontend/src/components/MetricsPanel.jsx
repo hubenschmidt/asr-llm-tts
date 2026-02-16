@@ -15,6 +15,17 @@ export const MetricsPanel = (props) => {
             <MetricRow label="LLM" ms={m().llm_ms} />
             <MetricRow label="TTS" ms={m().tts_ms} />
             <MetricRow label="E2E" ms={m().total_ms} highlight />
+
+            <Show when={m().asr_ms > 0}>
+              <h4 style={{ ...headingStyle, "margin-top": "10px" }}>ASR Detail</h4>
+              <DetailRow label="No-speech prob" value={(m().no_speech_prob * 100).toFixed(1) + "%"} color={m().no_speech_prob > 0.4 ? "#f39c12" : "#00b8d4"} />
+              <Show when={m().noise_suppressed}>
+                <DetailRow label="Noise suppression" value="on" color="#2ecc71" />
+              </Show>
+              <Show when={m().wer !== null && m().wer >= 0}>
+                <DetailRow label="WER" value={(m().wer * 100).toFixed(1) + "%"} color={m().wer > 0.3 ? "#e74c3c" : m().wer > 0.1 ? "#f39c12" : "#2ecc71"} />
+              </Show>
+            </Show>
           </div>
         )}
       </Show>
@@ -59,6 +70,13 @@ const MetricRow = (props) => {
     </div>
   );
 };
+
+const DetailRow = (props) => (
+  <div style={{ display: "flex", "justify-content": "space-between", padding: "3px 0", "font-size": "11px" }}>
+    <span style={{ color: "#4a6880" }}>{props.label}</span>
+    <span style={{ color: props.color }}>{props.value}</span>
+  </div>
+);
 
 const computeAverages = (history) => {
   if (history.length === 0) {

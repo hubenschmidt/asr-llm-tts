@@ -29,7 +29,7 @@ type deps struct {
 
 // registerRoutes wires all HTTP endpoints to the shared mux.
 // Groups: WebSocket call handler, Prometheus metrics, model/GPU management,
-// TTS warmup, STT model management, and service orchestration CRUD.
+// TTS warmup, ASR model management, and service orchestration CRUD.
 func registerRoutes(mux *http.ServeMux, d deps) {
 	mux.Handle("/ws/call", d.wsHandler)
 	mux.Handle("/metrics", promhttp.Handler())
@@ -137,7 +137,7 @@ func registerRoutes(mux *http.ServeMux, d deps) {
 			return
 		}
 		slog.Info("warming up tts engine", "engine", req.Engine)
-		_, err := d.ttsClient.Synthesize(r.Context(), "Hello.", req.Engine)
+		_, err := d.ttsClient.Synthesize(r.Context(), "Hello.", req.Engine, pipeline.TTSOptions{})
 		if err != nil {
 			slog.Error("tts warmup", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -217,7 +217,7 @@ func registerRoutes(mux *http.ServeMux, d deps) {
 		}
 	})
 
-	mux.HandleFunc("GET /api/stt/models", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/asr/models", func(w http.ResponseWriter, r *http.Request) {
 		if d.whisperControlURL == "" {
 			http.Error(w, "whisper-control not configured", http.StatusServiceUnavailable)
 			return
@@ -232,7 +232,7 @@ func registerRoutes(mux *http.ServeMux, d deps) {
 		io.Copy(w, resp.Body)
 	})
 
-	mux.HandleFunc("POST /api/stt/models/download", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/asr/models/download", func(w http.ResponseWriter, r *http.Request) {
 		if d.whisperControlURL == "" {
 			http.Error(w, "whisper-control not configured", http.StatusServiceUnavailable)
 			return
