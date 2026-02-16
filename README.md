@@ -12,11 +12,11 @@ Real-time voice pipeline for call center automation, built for AMD GPUs via ROCm
 
 ## TTS engines
 
-| Engine        | Type      | Notes                                 |
-| ------------- | --------- | ------------------------------------- |
-| Piper Fast    | CPU       | Lowest latency (6MB)                  |
-| Piper Quality | CPU       | Balanced (17MB)                       |
-| Piper High    | CPU       | Most natural (109MB)                  |
+| Engine        | Type | Notes                |
+| ------------- | ---- | -------------------- |
+| Piper Fast    | CPU  | Lowest latency (6MB) |
+| Piper Quality | CPU  | Balanced (17MB)      |
+| Piper High    | CPU  | Most natural (109MB) |
 
 ## STT engines
 
@@ -74,35 +74,3 @@ Open http://localhost:3001, select your STT/LLM/TTS, click Talk.
 - **Thinking toggle** — Reasoning from thinking models is hidden by default, expandable via "Show reasoning" button
 - **Metrics panel** — Per-stage latency (ASR, LLM, TTS) and E2E timing
 - **Sound check** — VU meter for mic level verification
-
-## Config
-
-Everything is in `.env`:
-
-| Variable            | Default               | What it does                    |
-| ------------------- | --------------------- | ------------------------------- |
-| OLLAMA_URL          | http://localhost:11434 | Ollama API endpoint             |
-| OLLAMA_MODEL        | llama3.2:3b           | Default LLM model               |
-| WHISPER_SERVER_URL  | (empty)               | whisper-server endpoint          |
-| WHISPER_CONTROL_URL | (empty)               | whisper-control lifecycle API    |
-| OPENAI_API_KEY      | (empty)               | Enables OpenAI LLM when set      |
-| ANTHROPIC_API_KEY   | (empty)               | Enables Anthropic LLM when set   |
-| AUDIOCLASSIFY_URL   | (empty)               | Audio emotion classification API |
-| POSTGRES_URL        | (empty)               | Enables tracing when set         |
-| GATEWAY_PORT        | 8000                  | Gateway listen port              |
-
-Tuning knobs (pool sizes, system prompt, VAD thresholds) are in `gateway.json`.
-
-## Project layout
-
-```
-services/
-  gateway/          Go orchestrator (WebSocket, pipeline, VAD, codecs, piper TTS)
-  frontend/         SolidJS app (AudioWorklet mic, VU meter, transcript, GPU panel)
-  audioclassify/    Python emotion classification (emotion2vec)
-scripts/
-  build-whisper-server.sh
-  whisper-control.py    Host process for whisper-server lifecycle + GPU monitoring
-cmd/
-  whisper-control/      Go HTTP wrapper for whisper-control.py
-```
