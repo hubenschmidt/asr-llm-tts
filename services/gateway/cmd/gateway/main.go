@@ -18,6 +18,7 @@ import (
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/models"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/orchestrator"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/pipeline"
+	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/trace"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/ws"
 )
 
@@ -101,6 +102,7 @@ func main() {
 	openaiAPIKey := env.Str("OPENAI_API_KEY", "")
 	anthropicAPIKey := env.Str("ANTHROPIC_API_KEY", "")
 	noisereduceURL := env.Str("NOISEREDUCE_URL", "")
+	audioclassifyURL := env.Str("AUDIOCLASSIFY_URL", "")
 
 	// Service orchestrator
 	svcRegistry := orchestrator.NewRegistry(map[string]orchestrator.ServiceMeta{
@@ -129,6 +131,24 @@ func main() {
 		noiseClient = pipeline.NewNoiseClient(noisereduceURL)
 	}
 
+	var classifyClient *pipeline.ClassifyClient
+	if audioclassifyURL != "" {
+		classifyClient = pipeline.NewClassifyClient(audioclassifyURL)
+	}
+
+	traceDBPath := env.Str("TRACE_DB_PATH", "")
+	var traceStore *trace.SQLiteStore
+	if traceDBPath != "" {
+		var traceErr error
+		traceStore, traceErr = trace.Open(traceDBPath)
+		if traceErr != nil {
+			slog.Error("trace store open failed", "error", traceErr)
+		}
+		if traceStore != nil {
+			slog.Info("tracing enabled", "path", traceDBPath)
+		}
+	}
+
 	handler := ws.NewHandler(ws.HandlerConfig{
 		ASRClient:     asrRouter,
 		LLMClient:     llmRouter,
@@ -137,7 +157,9 @@ func main() {
 		MaxConcurrent: t.MaxConcurrentCalls,
 		RAGClient:     ragClient,
 		CallHistory:   callHistory,
-		NoiseClient:   noiseClient,
+		NoiseClient:    noiseClient,
+		ClassifyClient: classifyClient,
+		TraceStore:     traceStore,
 	})
 
 	gpu := newGPUHub(ollamaURL, whisperControlURL)
@@ -153,6 +175,7 @@ func main() {
 		svcMgr:            svcMgr,
 		gpu:               gpu,
 		wsHandler:         handler,
+		traceStore:        traceStore,
 	})
 
 	addr := ":" + port

@@ -70,4 +70,20 @@ var (
 		Name: "asr_wer_estimate",
 		Help: "Latest WER estimate from reference transcript evaluation",
 	})
+
+	ClassifySceneTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "classify_scene_total",
+		Help: "Scene classification counts by label",
+	}, []string{"label"})
+
+	ClassifyEmotionTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "classify_emotion_total",
+		Help: "Emotion classification counts by label",
+	}, []string{"label"})
+
+	ClassifyDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "classify_duration_seconds",
+		Help:    "Classification inference latency",
+		Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.2},
+	}, []string{"type"})
 )

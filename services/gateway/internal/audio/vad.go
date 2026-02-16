@@ -7,25 +7,30 @@ import (
 
 // VADConfig controls voice activity detection behavior.
 type VADConfig struct {
-	SpeechThresholdDB float64
-	SilenceTimeout    time.Duration
-	MinSpeechDuration time.Duration
-	PreSpeechBuffer   time.Duration
-	SampleRate        int
+	SpeechThresholdDB    float64
+	SilenceTimeout       time.Duration
+	MinSpeechDuration    time.Duration
+	PreSpeechBuffer      time.Duration
+	SampleRate           int
+	CalibrationDuration  time.Duration // noise floor calibration window (0 = disabled)
+	AdaptiveMarginDB     float64       // dB above noise floor for speech threshold
 }
 
 // DefaultVADConfig returns sensible defaults for call center audio.
 func DefaultVADConfig() VADConfig {
 	return VADConfig{
-		SpeechThresholdDB: -30,
-		SilenceTimeout:    1000 * time.Millisecond,
-		MinSpeechDuration: 500 * time.Millisecond,
-		PreSpeechBuffer:   300 * time.Millisecond,
-		SampleRate:        16000,
+		SpeechThresholdDB:   -30,
+		SilenceTimeout:      1000 * time.Millisecond,
+		MinSpeechDuration:   500 * time.Millisecond,
+		PreSpeechBuffer:     300 * time.Millisecond,
+		SampleRate:          16000,
+		CalibrationDuration: 500 * time.Millisecond,
+		AdaptiveMarginDB:    10,
 	}
 }
 
-// VAD implements energy-based voice activity detection.
+// VAD implements energy-based voice activity detection with optional
+// adaptive threshold calibration during the first N milliseconds.
 type VAD struct {
 	cfg            VADConfig
 	isSpeech       bool
@@ -34,6 +39,12 @@ type VAD struct {
 	buffer         []float32
 	preSpeech      []float32
 	preSpeechLen   int
+
+	// adaptive calibration
+	calibrating        bool
+	calibrationStart   time.Time
+	calibrationReadings []float64
+	threshold          float64
 }
 
 // NewVAD creates a VAD with the given config.
@@ -43,6 +54,8 @@ func NewVAD(cfg VADConfig) *VAD {
 		cfg:          cfg,
 		preSpeechLen: preSpeechSamples,
 		preSpeech:    make([]float32, 0, preSpeechSamples),
+		calibrating:  cfg.CalibrationDuration > 0,
+		threshold:    cfg.SpeechThresholdDB,
 	}
 }
 
@@ -57,10 +70,43 @@ func (v *VAD) Process(samples []float32) VADResult {
 	energyDB := computeEnergyDB(samples)
 	now := time.Now()
 
-	if energyDB >= v.cfg.SpeechThresholdDB {
+	if v.calibrating {
+		v.calibrate(energyDB, now)
+	}
+
+	if energyDB >= v.threshold {
 		return v.handleSpeech(samples, now)
 	}
 	return v.handleSilence(samples, now)
+}
+
+// calibrate collects energy readings during the calibration window, then
+// computes the noise floor and sets the adaptive speech threshold.
+func (v *VAD) calibrate(energyDB float64, now time.Time) {
+	if v.calibrationStart.IsZero() {
+		v.calibrationStart = now
+	}
+	v.calibrationReadings = append(v.calibrationReadings, energyDB)
+
+	if now.Sub(v.calibrationStart) < v.cfg.CalibrationDuration {
+		return
+	}
+
+	// Compute noise floor as average energy during calibration
+	var sum float64
+	for _, e := range v.calibrationReadings {
+		sum += e
+	}
+	noiseFloor := sum / float64(len(v.calibrationReadings))
+
+	adaptive := noiseFloor + v.cfg.AdaptiveMarginDB
+	// Only adopt if it's stricter (higher) than the static default
+	if adaptive > v.cfg.SpeechThresholdDB {
+		v.threshold = adaptive
+	}
+
+	v.calibrating = false
+	v.calibrationReadings = nil
 }
 
 func (v *VAD) handleSpeech(samples []float32, now time.Time) VADResult {

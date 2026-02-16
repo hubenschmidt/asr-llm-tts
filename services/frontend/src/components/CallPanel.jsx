@@ -99,10 +99,19 @@ export const CallPanel = () => {
   const [asrPrompt, _setAsrPrompt] = createSignal(localStorage.getItem("asrPrompt") || "");
   const [confidenceThreshold, _setConfidenceThreshold] = createSignal(parseFloat(localStorage.getItem("confidenceThreshold")) || 0.6);
   const [referenceTranscript, _setReferenceTranscript] = createSignal(localStorage.getItem("referenceTranscript") || "");
+  const [vadSilenceTimeoutMs, _setVadSilenceTimeoutMs] = createSignal(parseInt(localStorage.getItem("vadSilenceTimeoutMs")) || 1000);
+  const [vadMinSpeechMs, _setVadMinSpeechMs] = createSignal(parseInt(localStorage.getItem("vadMinSpeechMs")) || 500);
   const setNoiseSuppression = (v) => { _setNoiseSuppression(v); localStorage.setItem("noiseSuppression", v); };
   const setAsrPrompt = (v) => { _setAsrPrompt(v); localStorage.setItem("asrPrompt", v); };
   const setConfidenceThreshold = (v) => { _setConfidenceThreshold(v); localStorage.setItem("confidenceThreshold", v); };
   const setReferenceTranscript = (v) => { _setReferenceTranscript(v); localStorage.setItem("referenceTranscript", v); };
+  const setVadSilenceTimeoutMs = (v) => { _setVadSilenceTimeoutMs(v); localStorage.setItem("vadSilenceTimeoutMs", v); };
+  const setVadMinSpeechMs = (v) => { _setVadMinSpeechMs(v); localStorage.setItem("vadMinSpeechMs", v); };
+
+  // Audio classification toggle (localStorage-persisted)
+  const [audioClassification, _setAudioClassification] = createSignal(localStorage.getItem("audioClassification") === "true");
+  const setAudioClassification = (v) => { _setAudioClassification(v); localStorage.setItem("audioClassification", v); };
+  const [classificationData, setClassificationData] = createSignal(null);
 
   // TTS tuning signals (localStorage-persisted)
   const [ttsSpeed, _setTtsSpeed] = createSignal(parseFloat(localStorage.getItem("ttsSpeed")) || 1.0);
@@ -279,10 +288,13 @@ export const CallPanel = () => {
     asrPrompt,
     confidenceThreshold,
     referenceTranscript,
+    vadSilenceTimeoutMs,
+    vadMinSpeechMs,
     ttsSpeed,
     ttsPitch,
     textNormalization,
     interSentencePauseMs,
+    audioClassification,
     onTranscript: (text) =>
       setTranscripts((prev) => [...prev, { role: "user", text }]),
     onLLMToken: (token) => setLlmResponse((prev) => prev + token),
@@ -297,6 +309,10 @@ export const CallPanel = () => {
       setLatestMetrics(m);
       setMetricsHistory((prev) => [...prev, m]);
     },
+    onClassification: (data) => setClassificationData((prev) => ({
+      scene: data.scene ?? prev?.scene ?? null,
+      emotion: data.emotion ?? prev?.emotion ?? null,
+    })),
     onError: (msg) => setError(msg),
     onLevel: setMicLevel,
   });
@@ -498,7 +514,7 @@ export const CallPanel = () => {
         {rightCollapsed() ? "\u2039" : "\u203A"}
       </button>
       <div class={`sidebar-right ${rightCollapsed() ? "collapsed" : ""}`}>
-        <MetricsPanel metrics={latestMetrics()} history={metricsHistory()} />
+        <MetricsPanel metrics={latestMetrics()} history={metricsHistory()} classification={classificationData()} />
         <div class="model-group" style={{ "margin-top": "12px" }}>
           <label class="label">System Prompt</label>
           <div class="mode-toggle" style={{ "margin-bottom": "6px" }}>
@@ -540,6 +556,16 @@ export const CallPanel = () => {
                 <span>Noise suppression</span>
                 <Tooltip text="Send audio through a noise-reduction model before ASR. Helps in noisy environments but adds latency." />
               </label>
+              <label class="tuning-row">
+                <input
+                  type="checkbox"
+                  checked={audioClassification()}
+                  onChange={(e) => setAudioClassification(e.target.checked)}
+                  disabled={isStreaming()}
+                />
+                <span>Audio classification</span>
+                <Tooltip text="Run scene (speech/music/noise/silence) and emotion detection in parallel. Zero impact on pipeline latency." />
+              </label>
               <label class="tuning-label">ASR prompt <Tooltip text="Hint text passed to the ASR model to improve recognition of domain-specific terms, names, or acronyms." /></label>
               <input
                 type="text"
@@ -569,6 +595,30 @@ export const CallPanel = () => {
                 onInput={(e) => setReferenceTranscript(e.target.value)}
                 disabled={isStreaming()}
                 placeholder="Ground truth for WER eval…"
+              />
+              <label class="tuning-label">
+                Silence timeout: {vadSilenceTimeoutMs()}ms
+                <Tooltip text="How long to wait after speech stops before triggering ASR. Lower = faster response, higher = captures mid-sentence pauses." />
+              </label>
+              <input
+                type="range"
+                class="tuning-range"
+                min="300" max="3000" step="100"
+                value={vadSilenceTimeoutMs()}
+                onInput={(e) => setVadSilenceTimeoutMs(parseInt(e.target.value))}
+                disabled={isStreaming()}
+              />
+              <label class="tuning-label">
+                Min speech: {vadMinSpeechMs()}ms
+                <Tooltip text="Minimum utterance length to trigger ASR. Filters out clicks, coughs, and other brief sounds." />
+              </label>
+              <input
+                type="range"
+                class="tuning-range"
+                min="100" max="2000" step="100"
+                value={vadMinSpeechMs()}
+                onInput={(e) => setVadMinSpeechMs(parseInt(e.target.value))}
+                disabled={isStreaming()}
               />
             </div>
           </div>

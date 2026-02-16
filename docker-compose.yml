@@ -59,12 +59,45 @@ services:
       dockerfile: Dockerfile
     ports:
       - "5200:5200"
+    volumes:
+      - ./services/noisereduce/src:/app/src
+      - ./services/noisereduce/Cargo.toml:/app/Cargo.toml
+      - noisereduce-target:/app/target
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5200/health"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 30s
+    restart: unless-stopped
+
+  audioclassify:
+    build:
+      context: ./services/audioclassify
+      dockerfile: Dockerfile
+    ports:
+      - "5300:5300"
+    volumes:
+      - ./services/audioclassify/main.py:/app/main.py
+      - ./services/audioclassify/models.py:/app/models.py
+    command:
+      [
+        "uvicorn",
+        "main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "5300",
+        "--reload",
+        "--log-level",
+        "warning",
+      ]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5300/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     restart: unless-stopped
 
   # --- commented out services ---
@@ -161,4 +194,5 @@ volumes:
   go-mod-cache:
   go-build-cache:
   node-modules:
+  noisereduce-target:
   # qdrant-data:

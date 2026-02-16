@@ -1,0 +1,255 @@
+/* === Observe Panel — Three-column layout === */
+.observe-layout {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+  background: #0b0e17;
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+  color: #c0c8d8;
+}
+
+/* --- Nav toggle (fixed top-right) --- */
+.nav-toggle {
+  position: fixed;
+  top: 12px;
+  right: 16px;
+  z-index: 100;
+  padding: 6px 14px;
+  background: #1a2535;
+  border: 1px solid #2a3a50;
+  border-radius: 4px;
+  color: #4a9ec8;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: none;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.nav-toggle:hover {
+  background: #243448;
+  color: #6bbde0;
+}
+
+/* --- Session list (left) --- */
+.session-list {
+  width: 260px;
+  flex-shrink: 0;
+  padding: 16px;
+  overflow-y: auto;
+  border-right: 1px solid #1a2535;
+  background: #0d1019;
+}
+
+.session-list h2 {
+  font-size: 12px;
+  color: #4a9ec8;
+  margin: 0 0 14px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  font-weight: 400;
+}
+
+.session-item {
+  padding: 8px 10px;
+  margin-bottom: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  border: 1px solid transparent;
+}
+.session-item:hover {
+  background: #131926;
+}
+.session-item.active {
+  background: #162030;
+  border-color: #4a9ec8;
+}
+.session-id {
+  color: #4a9ec8;
+  font-weight: 600;
+}
+.session-meta {
+  color: #6b7a90;
+  margin-top: 2px;
+}
+
+/* --- Trace tree (center) --- */
+.trace-center {
+  flex: 1;
+  min-width: 0;
+  padding: 16px 24px;
+  overflow-y: auto;
+  background: #0b0e17;
+}
+
+.trace-center h2 {
+  font-size: 12px;
+  color: #4a9ec8;
+  margin: 0 0 14px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  font-weight: 400;
+}
+
+.run-card {
+  background: #0d1019;
+  border: 1px solid #1a2535;
+  border-radius: 6px;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+
+.run-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.run-header:hover {
+  background: #131926;
+}
+
+.run-status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.run-status.ok { background: #2ecc71; }
+.run-status.error { background: #e74c3c; }
+.run-status.filtered { background: #6b7280; }
+.run-status.running { background: #f39c12; }
+
+.run-transcript {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #c0c8d8;
+}
+
+.run-duration {
+  color: #6b7a90;
+  flex-shrink: 0;
+}
+
+/* --- Waterfall --- */
+.waterfall {
+  padding: 8px 14px 14px;
+  border-top: 1px solid #1a2535;
+}
+
+.waterfall-row {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  margin-bottom: 2px;
+  cursor: pointer;
+}
+.waterfall-row:hover {
+  background: #131926;
+  border-radius: 3px;
+}
+
+.waterfall-label {
+  width: 110px;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #8899aa;
+  text-align: right;
+  padding-right: 10px;
+}
+
+.waterfall-track {
+  flex: 1;
+  position: relative;
+  height: 16px;
+  background: #111622;
+  border-radius: 3px;
+}
+
+.waterfall-bar {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 3px;
+  min-width: 3px;
+  opacity: 0.85;
+}
+
+.waterfall-bar-time {
+  font-size: 9px;
+  color: #c0c8d8;
+  position: absolute;
+  right: 4px;
+  top: 2px;
+  line-height: 12px;
+}
+
+/* span colors */
+.bar-asr { background: #3b82f6; }
+.bar-llm { background: #8b5cf6; }
+.bar-tts { background: #2ecc71; }
+.bar-rag { background: #f39c12; }
+.bar-scene_classify { background: #eab308; }
+.bar-emotion_classify { background: #eab308; }
+
+/* --- Span detail (right) --- */
+.span-detail {
+  width: 300px;
+  flex-shrink: 0;
+  padding: 16px;
+  overflow-y: auto;
+  border-left: 1px solid #1a2535;
+  background: #0d1019;
+}
+
+.span-detail h2 {
+  font-size: 12px;
+  color: #4a9ec8;
+  margin: 0 0 14px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  font-weight: 400;
+}
+
+.span-detail-row {
+  margin-bottom: 10px;
+}
+
+.span-detail-label {
+  font-size: 10px;
+  color: #6b7a90;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 2px;
+}
+
+.span-detail-value {
+  font-size: 12px;
+  color: #c0c8d8;
+}
+
+.span-detail pre {
+  background: #111622;
+  padding: 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: #c0c8d8;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+  margin: 0;
+}
+
+.empty-state {
+  color: #4a5568;
+  font-size: 12px;
+  text-align: center;
+  padding: 40px 20px;
+}

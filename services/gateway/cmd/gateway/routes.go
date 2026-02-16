@@ -13,6 +13,7 @@ import (
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/models"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/orchestrator"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/pipeline"
+	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/trace"
 )
 
 type deps struct {
@@ -25,6 +26,7 @@ type deps struct {
 	svcMgr            *orchestrator.HTTPControlManager
 	gpu               *gpuHub
 	wsHandler         http.Handler
+	traceStore        *trace.SQLiteStore
 }
 
 // registerRoutes wires all HTTP endpoints to the shared mux.
@@ -308,6 +310,8 @@ func registerRoutes(mux *http.ServeMux, d deps) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(info)
 	})
+
+	registerTraceRoutes(mux, d.traceStore)
 }
 
 func unloadIfLLM(ctx context.Context, ollamaURL, typ, model string) error {
@@ -357,4 +361,65 @@ func (fw *flushWriter) Write(p []byte) (int, error) {
 	n, err := fw.w.Write(p)
 	fw.flush()
 	return n, err
+}
+
+func registerTraceRoutes(mux *http.ServeMux, store *trace.SQLiteStore) {
+	mux.HandleFunc("GET /api/traces/sessions", func(w http.ResponseWriter, r *http.Request) {
+		if store == nil {
+			http.Error(w, "tracing disabled", http.StatusNotFound)
+			return
+		}
+		limit := queryInt(r, "limit", 20)
+		offset := queryInt(r, "offset", 0)
+		sessions, total, err := store.ListSessions(limit, offset)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"sessions": sessions, "total": total})
+	})
+
+	mux.HandleFunc("GET /api/traces/sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if store == nil {
+			http.Error(w, "tracing disabled", http.StatusNotFound)
+			return
+		}
+		sess, runs, err := store.GetSession(r.PathValue("id"))
+		if err != nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"session": sess, "runs": runs})
+	})
+
+	mux.HandleFunc("GET /api/traces/sessions/{id}/runs/{runId}", func(w http.ResponseWriter, r *http.Request) {
+		if store == nil {
+			http.Error(w, "tracing disabled", http.StatusNotFound)
+			return
+		}
+		run, spans, err := store.GetRun(r.PathValue("id"), r.PathValue("runId"))
+		if err != nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"run": run, "spans": spans})
+	})
+}
+
+func queryInt(r *http.Request, key string, fallback int) int {
+	v := r.URL.Query().Get(key)
+	if v == "" {
+		return fallback
+	}
+	n := 0
+	for _, c := range v {
+		if c < '0' || c > '9' {
+			return fallback
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n
 }

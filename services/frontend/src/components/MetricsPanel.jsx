@@ -40,12 +40,43 @@ export const MetricsPanel = (props) => {
         </div>
       </Show>
 
+      <Show when={props.classification?.scene || props.classification?.emotion}>
+        <div style={sectionStyle}>
+          <h4 style={headingStyle}>Audio Classification</h4>
+          <Show when={props.classification?.scene}>
+            <DetailRow
+              label="Scene"
+              value={`${props.classification.scene.label} (${(props.classification.scene.confidence * 100).toFixed(0)}%)`}
+              color="#00b8d4"
+            />
+          </Show>
+          <Show when={props.classification?.emotion}>
+            <DetailRow
+              label="Emotion"
+              value={`${props.classification.emotion.label} (${(props.classification.emotion.confidence * 100).toFixed(0)}%)`}
+              color={emotionColor(props.classification.emotion.label)}
+            />
+          </Show>
+        </div>
+      </Show>
+
       <Show when={!props.metrics}>
         <p style={{ color: "#2a3545", "font-style": "italic", "font-size": "11px" }}>No metrics yet</p>
       </Show>
     </div>
   );
 };
+
+const EMOTION_COLORS = {
+  neutral: "#00b8d4",
+  happy: "#2ecc71",
+  angry: "#e74c3c",
+  sad: "#3498db",
+  frustrated: "#f39c12",
+  surprised: "#9b59b6",
+};
+
+const emotionColor = (label) => EMOTION_COLORS[label] ?? "#00b8d4";
 
 const metricColor = (ms) => {
   if (ms > 1000) return "#e74c3c";

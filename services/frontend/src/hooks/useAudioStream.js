@@ -47,10 +47,13 @@ export const useAudioStream = (opts) => {
         asr_prompt: opts.asrPrompt?.() || "",
         confidence_threshold: opts.confidenceThreshold?.() ?? 0.6,
         reference_transcript: opts.referenceTranscript?.() || "",
+        vad_silence_timeout_ms: opts.vadSilenceTimeoutMs?.() ?? 1000,
+        vad_min_speech_ms: opts.vadMinSpeechMs?.() ?? 500,
         tts_speed: opts.ttsSpeed?.() ?? 1.0,
         tts_pitch: opts.ttsPitch?.() ?? 1.0,
         text_normalization: opts.textNormalization?.() ?? true,
         inter_sentence_pause_ms: opts.interSentencePauseMs?.() ?? 0,
+        audio_classification: opts.audioClassification?.() || false,
       };
       if (mode) meta.mode = mode;
       socket.send(JSON.stringify(meta));
@@ -78,6 +81,10 @@ export const useAudioStream = (opts) => {
             wer: event.wer ?? null,
             noise_suppressed: event.noise_suppressed ?? false,
           }),
+        classification: () => opts.onClassification?.({
+          scene: event.scene ?? null,
+          emotion: event.emotion ?? null,
+        }),
         error: () => opts.onError(event.text ?? "unknown error"),
       };
       handlers[event.type]?.();

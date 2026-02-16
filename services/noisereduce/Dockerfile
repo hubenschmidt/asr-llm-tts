@@ -1,10 +1,8 @@
-FROM rust:1.84-slim AS build
+FROM rust:1.85-slim
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+RUN cargo install cargo-watch --locked
 WORKDIR /app
 COPY Cargo.toml Cargo.lock* ./
-COPY src/ src/
-RUN cargo build --release
-
-FROM debian:bookworm-slim
-COPY --from=build /app/target/release/noisereduce /usr/local/bin/noisereduce
+RUN mkdir src && echo 'fn main(){}' > src/main.rs && cargo build --release && rm -rf src
 EXPOSE 5200
-CMD ["noisereduce"]
+CMD ["cargo", "watch", "-w", "src", "-s", "cargo run --release"]
