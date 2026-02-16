@@ -34,5 +34,10 @@ models/
 .vscode/
 .idea/
 
+# Database
+*.db
+*.db-wal
+*.db-shm
+
 # ENV
 .env
