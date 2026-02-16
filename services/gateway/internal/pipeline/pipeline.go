@@ -74,7 +74,9 @@ func (p *Pipeline) ProcessChunk(ctx context.Context, data []byte, codec audio.Co
 		return fmt.Errorf("decode: %w", err)
 	}
 
-	resampled := audio.Resample(samples, srcRate, 16000)
+	slog.Debug("ProcessChunk", "raw_bytes", len(data), "decoded_samples", len(samples), "srcRate", srcRate, "sampleRate_arg", sampleRate)
+
+	resampled := audio.Resample(samples, srcRate, 16000) // needs to be resampled at 16 kHz for Whisper model consumption
 	result := p.vad.Process(resampled)
 
 	if !result.SpeechEnded {

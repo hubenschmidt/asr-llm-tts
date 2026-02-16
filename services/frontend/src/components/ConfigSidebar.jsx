@@ -194,6 +194,22 @@ export const ConfigSidebar = (props) => {
             </button>
           </div>
         </div>
+        {/* Audio Bandwidth */}
+        <Show when={c.bandwidthModes().length > 0}>
+          <div class="model-group">
+            <label class="label">Audio Bandwidth</label>
+            <select
+              value={c.audioBandwidth()}
+              onChange={on.bandwidthChange}
+              class="select"
+              disabled={c.isStreaming()}
+            >
+              <For each={c.bandwidthModes()}>
+                {(m) => <option value={m.id}>{m.label}</option>}
+              </For>
+            </select>
+          </div>
+        </Show>
       </div>
 
     </div>

@@ -86,6 +86,9 @@ export const CallPanel = () => {
   const [downloadingModel, setDownloadingModel] = createSignal("");
   const [downloadProgress, setDownloadProgress] = createSignal(null);
   const [mode, setMode] = createSignal(localStorage.getItem("callMode") || "talk");
+  const [audioBandwidth, _setAudioBandwidth] = createSignal(localStorage.getItem("audioBandwidth") || "wideband");
+  const setAudioBandwidth = (v) => { _setAudioBandwidth(v); localStorage.setItem("audioBandwidth", v); };
+  const [bandwidthModes, setBandwidthModes] = createSignal([]);
   const [explainText, setExplainText] = createSignal(null);
   const [leftCollapsed, setLeftCollapsed] = createSignal(false);
   const [rightCollapsed, setRightCollapsed] = createSignal(false);
@@ -140,6 +143,7 @@ export const CallPanel = () => {
         setOllamaModels(data.llm.models);
         if (data.llm?.engines) setAvailableLLMEngines(data.llm.engines);
         if (data.tts?.engines) setAvailableTTS(data.tts.engines);
+        if (data.audio?.bandwidth_modes) setBandwidthModes(data.audio.bandwidth_modes);
 
         // Validate saved model belongs to the current engine's model list
         const cloud = CLOUD_MODELS[llmEngine()];
@@ -248,6 +252,8 @@ export const CallPanel = () => {
     systemPrompt,
     llmModel,
     llmEngine,
+    audioBandwidth,
+    bandwidthModes,
     onTranscript: (text) =>
       setTranscripts((prev) => [...prev, { role: "user", text }]),
     onLLMToken: (token) => setLlmResponse((prev) => prev + token),
@@ -404,6 +410,7 @@ export const CallPanel = () => {
     sttEngine, sttModel, sttModels, llmEngine, llmModel, allLLMModels, ttsEngine,
     availableTTS, loadingSTT, loadingLLM, loadingTTS, isStreaming,
     systemPrompt, promptPreset, serviceStatuses, downloadingModel, downloadProgress,
+    audioBandwidth, bandwidthModes,
   };
 
   const configHandlers = {
@@ -416,6 +423,7 @@ export const CallPanel = () => {
     unloadLLM: handleUnloadLLM,
     unloadTTS: handleUnloadTTS,
     unloadAll: handleUnloadAll,
+    bandwidthChange: (e) => setAudioBandwidth(e.target.value),
     systemPromptChange: handleSystemPromptChange,
     promptPresetChange: handlePromptPreset,
     sttDotColor,

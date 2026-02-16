@@ -62,6 +62,13 @@ func registerRoutes(mux *http.ServeMux, d deps) {
 			"tts": map[string]interface{}{
 				"engines": d.ttsClient.Engines(),
 			},
+			"audio": map[string]interface{}{
+				"bandwidth_modes": []map[string]interface{}{
+					{"id": "wideband", "label": "Wideband", "sample_rate": nil, "bandpass": nil},
+					{"id": "narrowband", "label": "Narrowband — Call Center (8kHz)", "sample_rate": 8000, "bandpass": map[string]int{"low_hz": 300, "high_hz": 3400}},
+				},
+				"default": "wideband",
+			},
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)

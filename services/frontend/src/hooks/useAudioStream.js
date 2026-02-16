@@ -4,6 +4,14 @@ const rmsLevel = (samples) => Math.sqrt(samples.reduce((sum, s) => sum + s * s, 
 
 const toPCM16 = (float32) => Int16Array.from(float32, (s) => Math.max(-32768, Math.min(32767, s * 32767)));
 
+const downsample = (samples, srcRate, dstRate) => {
+  if (!dstRate || srcRate <= dstRate) return samples;
+  const ratio = srcRate / dstRate;
+  const out = new Float32Array(Math.floor(samples.length / ratio));
+  for (let i = 0; i < out.length; i++) out[i] = samples[Math.floor(i * ratio)];
+  return out;
+};
+
 export const useAudioStream = (opts) => {
   const [isStreaming, setIsStreaming] = createSignal(false);
   const [isRecording, setIsRecording] = createSignal(false);
@@ -12,6 +20,7 @@ export const useAudioStream = (opts) => {
   let worklet = null;
   let audioCtx = null;
   let sendingAudio = true;
+  let activeBwMode = null;
 
   const handleUnload = () => stop();
   window.addEventListener("beforeunload", handleUnload);
@@ -23,10 +32,12 @@ export const useAudioStream = (opts) => {
     socket.binaryType = "arraybuffer";
 
     socket.onopen = () => {
-      const sampleRate = audioCtx?.sampleRate ?? 48000;
+      const nativeRate = audioCtx?.sampleRate ?? 48000;
+      const sampleRate = activeBwMode?.sample_rate || nativeRate;
       const meta = {
         codec: "pcm",
         sample_rate: sampleRate,
+        audio_bandwidth: opts.audioBandwidth?.() || "wideband",
         tts_engine: opts.ttsEngine(),
         stt_engine: opts.sttEngine(),
         system_prompt: opts.systemPrompt(),
@@ -79,20 +90,36 @@ export const useAudioStream = (opts) => {
     const node = new AudioWorkletNode(audioCtx, "pcm-sender");
     worklet = node;
 
+    const targetRate = activeBwMode?.sample_rate;
+    const nativeRate = audioCtx.sampleRate;
+
     node.port.onmessage = (ev) => {
       const float32 = ev.data;
       if (!sendingAudio) return;
       opts.onLevel?.(rmsLevel(float32));
       if (socket.readyState !== WebSocket.OPEN) return;
-      socket.send(toPCM16(float32).buffer);
+      const resampled = downsample(float32, nativeRate, targetRate);
+      socket.send(toPCM16(resampled).buffer);
     };
-
-    source.connect(node);
+    let chain = source;
+    if (activeBwMode?.bandpass) {
+      const hp = audioCtx.createBiquadFilter();
+      hp.type = "highpass";
+      hp.frequency.value = activeBwMode.bandpass.low_hz;
+      const lp = audioCtx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.value = activeBwMode.bandpass.high_hz;
+      chain.connect(hp);
+      hp.connect(lp);
+      chain = lp;
+    }
+    chain.connect(node);
     node.connect(audioCtx.destination);
   };
 
   const startWithMic = async (mode) => {
     try {
+      activeBwMode = (opts.bandwidthModes?.() || []).find((m) => m.id === opts.audioBandwidth?.()) || null;
       audioCtx = new AudioContext();
       sendingAudio = true;
       const socket = connect(mode);
@@ -183,6 +210,7 @@ export const useAudioStream = (opts) => {
     audioCtx = null;
     ws = null;
     sendingAudio = true;
+    activeBwMode = null;
     setIsStreaming(false);
     setIsRecording(false);
   };
