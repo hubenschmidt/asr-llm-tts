@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/audio"
-	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/metrics"
 )
 
 // ASROptions holds per-call ASR tuning parameters.
@@ -95,14 +94,12 @@ func (c *MultipartASRClient) Transcribe(ctx context.Context, samples []float32, 
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		metrics.Errors.WithLabelValues("asr", "http").Inc()
 		return nil, fmt.Errorf("%s request: %w", c.label, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		metrics.Errors.WithLabelValues("asr", "status").Inc()
 		return nil, fmt.Errorf("%s status %d: %s", c.label, resp.StatusCode, string(respBody))
 	}
 
@@ -112,7 +109,6 @@ func (c *MultipartASRClient) Transcribe(ctx context.Context, samples []float32, 
 	}
 
 	latency := time.Since(start)
-	metrics.StageDuration.WithLabelValues("asr").Observe(latency.Seconds())
 
 	return &ASRResult{
 		Text:         result.Text,

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/audio"
-	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/metrics"
+	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/denoise"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/trace"
 )
 
@@ -43,13 +43,11 @@ type Config struct {
 	LLMClient           *AgentLLM
 	TTSClient           *TTSRouter
 	VADConfig           audio.VADConfig
-	RAGClient           *RAGClient
-	CallHistory         *CallHistoryClient
 	SessionID           string
 	SystemPrompt        string
 	LLMModel            string
 	LLMEngine           string
-	NoiseClient         *NoiseClient
+	Denoiser            *denoise.Denoiser
 	NoiseSuppression    bool
 	ASRPrompt            string
 	ConfidenceThreshold  float64
@@ -71,11 +69,10 @@ type turn struct {
 
 // Pipeline processes a single call session through ASR → LLM → TTS.
 type Pipeline struct {
-	cfg           Config
-	vad           *audio.VAD
-	history       []turn
-	snippetBuf    []float32
-	noiseWarnOnce sync.Once
+	cfg        Config
+	vad        *audio.VAD
+	history    []turn
+	snippetBuf []float32
 }
 
 // New creates a pipeline for a single call session.
@@ -109,8 +106,6 @@ type EventCallback func(Event)
 // ProcessChunk decodes, resamples, and VAD-processes an audio chunk.
 // If the VAD detects end-of-speech, runs the full ASR → LLM → TTS pipeline.
 func (p *Pipeline) ProcessChunk(ctx context.Context, data []byte, codec audio.Codec, sampleRate int, ttsEngine, asrEngine string, onEvent EventCallback) error {
-	metrics.AudioChunks.Inc()
-
 	samples, srcRate, err := audio.Decode(data, codec, sampleRate)
 	if err != nil {
 		return fmt.Errorf("decode: %w", err)
@@ -118,16 +113,8 @@ func (p *Pipeline) ProcessChunk(ctx context.Context, data []byte, codec audio.Co
 
 	resampled := audio.Resample(samples, srcRate, 16000) // needs to be resampled at 16 kHz for Whisper model consumption
 
-	if p.cfg.NoiseClient != nil {
-		denoised, nErr := p.cfg.NoiseClient.Denoise(ctx, resampled)
-		if nErr != nil {
-			p.noiseWarnOnce.Do(func() {
-				slog.Warn("noise suppression failed, using raw audio", "error", nErr)
-			})
-		}
-		if nErr == nil {
-			resampled = denoised
-		}
+	if p.cfg.Denoiser != nil && srcRate >= 16000 {
+		resampled = p.cfg.Denoiser.Denoise(resampled)
 	}
 
 	result := p.vad.Process(resampled)
@@ -136,15 +123,12 @@ func (p *Pipeline) ProcessChunk(ctx context.Context, data []byte, codec audio.Co
 		return nil
 	}
 
-	metrics.SpeechSegments.Inc()
 	return p.runFullPipeline(ctx, result.Audio, ttsEngine, asrEngine, onEvent)
 }
 
 // ProcessChunkNoVAD decodes and resamples audio, appending to the snippet buffer
 // without VAD processing. Used in snippet mode.
 func (p *Pipeline) ProcessChunkNoVAD(data []byte, codec audio.Codec, sampleRate int) error {
-	metrics.AudioChunks.Inc()
-
 	samples, srcRate, err := audio.Decode(data, codec, sampleRate)
 	if err != nil {
 		return fmt.Errorf("decode: %w", err)
@@ -163,7 +147,6 @@ func (p *Pipeline) ProcessBuffered(ctx context.Context, ttsEngine, asrEngine str
 
 	buf := p.snippetBuf
 	p.snippetBuf = nil
-	metrics.SpeechSegments.Inc()
 	return p.runFullPipeline(ctx, buf, ttsEngine, asrEngine, onEvent)
 }
 
@@ -174,10 +157,9 @@ func (p *Pipeline) ProcessTextMessage(ctx context.Context, message string, onEve
 		return nil
 	}
 
-	ragContext := p.retrieveRAGContext(ctx, message)
 	llmInput := p.formatInput(message)
 
-	llmResult, err := p.cfg.LLMClient.Chat(ctx, llmInput, ragContext, p.cfg.SystemPrompt, p.cfg.LLMModel, p.cfg.LLMEngine, func(token string) {
+	llmResult, err := p.cfg.LLMClient.Chat(ctx, llmInput, p.cfg.SystemPrompt, p.cfg.LLMModel, p.cfg.LLMEngine, func(token string) {
 		onEvent(Event{Type: "llm_token", Token: token})
 	})
 	if err != nil {
@@ -192,10 +174,6 @@ func (p *Pipeline) ProcessTextMessage(ctx context.Context, message string, onEve
 
 	p.history = append(p.history, turn{user: message, assistant: llmResult.Text})
 
-	if p.cfg.CallHistory != nil {
-		p.cfg.CallHistory.StoreAsync(ctx, p.cfg.SessionID, message, llmResult.Text)
-	}
-
 	onEvent(Event{Type: "metrics", LLMMs: llmResult.LatencyMs})
 	return nil
 }
@@ -207,12 +185,11 @@ func (p *Pipeline) Flush(ctx context.Context, ttsEngine, asrEngine string, onEve
 		return nil
 	}
 
-	metrics.SpeechSegments.Inc()
 	return p.runFullPipeline(ctx, remaining, ttsEngine, asrEngine, onEvent)
 }
 
-// runFullPipeline executes the complete ASR → RAG → LLM → TTS chain for one speech segment.
-// ASR must complete first to produce the transcript. RAG retrieval is best-effort (non-fatal).
+// runFullPipeline executes the complete ASR → LLM → TTS chain for one speech segment.
+// ASR must complete first to produce the transcript.
 // LLM and TTS run concurrently via sentence pipelining (see streamLLMWithTTS).
 func (p *Pipeline) runFullPipeline(ctx context.Context, speechAudio []float32, ttsEngine, asrEngine string, onEvent EventCallback) error {
 	e2eStart := time.Now()
@@ -222,7 +199,7 @@ func (p *Pipeline) runFullPipeline(ctx context.Context, speechAudio []float32, t
 		runID = p.cfg.Tracer.StartRun()
 	}
 
-	// Audio classification — fire-and-forget goroutines, parallel to ASR
+	// Audio classification — fire-and-forget, parallel to ASR
 	if p.cfg.AudioClassification && p.cfg.ClassifyClient != nil {
 		audioSnap := make([]float32, len(speechAudio))
 		copy(audioSnap, speechAudio)
@@ -230,84 +207,31 @@ func (p *Pipeline) runFullPipeline(ctx context.Context, speechAudio []float32, t
 		go func() { defer emotionCancel(); p.classifyEmotion(emotionCtx, audioSnap, onEvent, runID) }()
 	}
 
-	// ASR — must complete before LLM can start
-	asrStart := time.Now()
-	asrOpts := ASROptions{Prompt: p.cfg.ASRPrompt}
-	asrResult, err := p.cfg.ASRClient.Transcribe(ctx, speechAudio, asrEngine, asrOpts)
-	if p.cfg.Tracer != nil {
-		status, errMsg := "ok", ""
-		if err != nil {
-			status, errMsg = "error", err.Error()
-		}
-		p.cfg.Tracer.RecordSpan(runID, "asr", asrStart, asrResult.LatencyMs, fmt.Sprintf("audio_samples=%d", len(speechAudio)), asrResult.Text, status, errMsg)
-	}
+	transcript, asrResult, err := p.runASR(ctx, speechAudio, asrEngine, runID)
 	if err != nil {
 		p.endRun(runID, e2eStart, "", "", "error")
 		return fmt.Errorf("asr: %w", err)
 	}
-
-	transcript := strings.TrimSpace(asrResult.Text)
-	threshold := p.cfg.ConfidenceThreshold
-	if threshold == 0 {
-		threshold = 0.6
-	}
-	if transcript == "" || asrResult.NoSpeechProb > threshold || isNoiseTranscript(transcript) {
-		metrics.ASRNoiseFiltered.Inc()
-		p.endRun(runID, e2eStart, transcript, "", "filtered")
+	if transcript == "" {
+		p.endRun(runID, e2eStart, asrResult.Text, "", "filtered")
 		return nil
 	}
 
-	metrics.ASRNoSpeechProb.Observe(asrResult.NoSpeechProb)
 	slog.Info("transcript", "text", transcript, "asr_ms", asrResult.LatencyMs, "no_speech_prob", asrResult.NoSpeechProb)
 	onEvent(Event{Type: "transcript", Text: transcript, LatencyMs: asrResult.LatencyMs})
 
-	var wer float64 = -1
-	if p.cfg.ReferenceTranscript != "" {
-		wer = ComputeWER(p.cfg.ReferenceTranscript, transcript)
-		metrics.ASRWEREstimate.Set(wer)
-		slog.Info("transcript_eval",
-			"session_id", p.cfg.SessionID,
-			"reference", p.cfg.ReferenceTranscript,
-			"hypothesis", transcript,
-			"wer", wer,
-			"no_speech_prob", asrResult.NoSpeechProb,
-			"asr_ms", asrResult.LatencyMs,
-			"noise_suppression", p.cfg.NoiseSuppression,
-		)
-	}
+	wer := p.evaluateWER(transcript, asrResult)
 
-	// RAG — retrieve relevant context (non-fatal on error)
-	ragStart := time.Now()
-	ragContext := p.retrieveRAGContext(ctx, transcript)
-	if p.cfg.Tracer != nil && p.cfg.RAGClient != nil {
-		snippet := ragContext
-		if len(snippet) > 200 {
-			snippet = snippet[:200]
-		}
-		p.cfg.Tracer.RecordSpan(runID, "rag", ragStart, float64(time.Since(ragStart).Milliseconds()), transcript, snippet, "ok", "")
-	}
-
-	// Build input with conversation history for multi-turn context
+	// LLM→TTS sentence pipelining
 	llmInput := p.formatInput(transcript)
-
-	// LLM→TTS sentence pipelining: TTS starts on each sentence while LLM keeps generating
-	ttsLatencyMs, llmResult, err := p.streamLLMWithTTS(ctx, llmInput, ragContext, ttsEngine, onEvent, runID)
+	ttsLatencyMs, llmResult, err := p.streamLLMWithTTS(ctx, llmInput, ttsEngine, onEvent, runID)
 	if err != nil {
 		p.endRun(runID, e2eStart, transcript, "", "error")
 		return fmt.Errorf("llm+tts: %w", err)
 	}
 
-	// Track conversation turn
 	p.history = append(p.history, turn{user: transcript, assistant: llmResult.Text})
-
-	// Store conversation turn async (fire-and-forget)
-	if p.cfg.CallHistory != nil {
-		p.cfg.CallHistory.StoreAsync(ctx, p.cfg.SessionID, transcript, llmResult.Text)
-	}
-
 	e2eLatency := time.Since(e2eStart)
-	metrics.E2EDuration.Observe(e2eLatency.Seconds())
-
 	slog.Info("pipeline_done", "e2e_ms", e2eLatency.Milliseconds(), "asr_ms", asrResult.LatencyMs, "llm_ms", llmResult.LatencyMs, "tts_ms", ttsLatencyMs)
 
 	onEvent(Event{
@@ -323,6 +247,51 @@ func (p *Pipeline) runFullPipeline(ctx context.Context, speechAudio []float32, t
 
 	p.endRun(runID, e2eStart, transcript, llmResult.Text, "ok")
 	return nil
+}
+
+// runASR transcribes speech audio and filters noise/low-confidence results.
+// Returns empty transcript if filtered.
+func (p *Pipeline) runASR(ctx context.Context, speechAudio []float32, asrEngine, runID string) (string, *ASRResult, error) {
+	asrStart := time.Now()
+	asrResult, err := p.cfg.ASRClient.Transcribe(ctx, speechAudio, asrEngine, ASROptions{Prompt: p.cfg.ASRPrompt})
+	if p.cfg.Tracer != nil {
+		status, errMsg := "ok", ""
+		if err != nil {
+			status, errMsg = "error", err.Error()
+		}
+		p.cfg.Tracer.RecordSpan(runID, "asr", asrStart, asrResult.LatencyMs, fmt.Sprintf("audio_samples=%d", len(speechAudio)), asrResult.Text, status, errMsg)
+	}
+	if err != nil {
+		return "", nil, err
+	}
+
+	transcript := strings.TrimSpace(asrResult.Text)
+	threshold := p.cfg.ConfidenceThreshold
+	if threshold == 0 {
+		threshold = 0.6
+	}
+	if transcript == "" || asrResult.NoSpeechProb > threshold || isNoiseTranscript(transcript) {
+		return "", asrResult, nil
+	}
+	return transcript, asrResult, nil
+}
+
+// evaluateWER computes word error rate against the reference transcript, if configured.
+func (p *Pipeline) evaluateWER(transcript string, asrResult *ASRResult) float64 {
+	if p.cfg.ReferenceTranscript == "" {
+		return -1
+	}
+	wer := ComputeWER(p.cfg.ReferenceTranscript, transcript)
+	slog.Info("transcript_eval",
+		"session_id", p.cfg.SessionID,
+		"reference", p.cfg.ReferenceTranscript,
+		"hypothesis", transcript,
+		"wer", wer,
+		"no_speech_prob", asrResult.NoSpeechProb,
+		"asr_ms", asrResult.LatencyMs,
+		"noise_suppression", p.cfg.NoiseSuppression,
+	)
+	return wer
 }
 
 func (p *Pipeline) endRun(runID string, start time.Time, transcript, response, status string) {
@@ -391,21 +360,7 @@ func (p *Pipeline) classifyEmotion(ctx context.Context, samples []float32, onEve
 		slog.Warn("emotion classification failed", "error", err)
 		return
 	}
-	metrics.ClassifyEmotionTotal.WithLabelValues(result.Label).Inc()
-	metrics.ClassifyDuration.WithLabelValues("emotion").Observe(result.LatencyMs / 1000)
 	onEvent(Event{Type: "classification", Emotion: result})
-}
-
-func (p *Pipeline) retrieveRAGContext(ctx context.Context, transcript string) string {
-	if p.cfg.RAGClient == nil {
-		return ""
-	}
-	ragCtx, err := p.cfg.RAGClient.RetrieveContext(ctx, transcript)
-	if err != nil {
-		slog.Error("rag retrieval", "error", err)
-		return ""
-	}
-	return ragCtx
 }
 
 // streamLLMWithTTS runs LLM streaming and TTS synthesis concurrently using a
@@ -413,7 +368,7 @@ func (p *Pipeline) retrieveRAGContext(ctx context.Context, transcript string) st
 // when a sentence boundary is detected, the complete sentence is sent to a channel.
 // A goroutine (consumer) reads sentences and synthesizes audio via TTS in parallel,
 // so the first TTS audio is ready before the LLM finishes generating.
-func (p *Pipeline) streamLLMWithTTS(ctx context.Context, transcript, ragContext, ttsEngine string, onEvent EventCallback, runID string) (float64, *LLMResult, error) {
+func (p *Pipeline) streamLLMWithTTS(ctx context.Context, transcript, ttsEngine string, onEvent EventCallback, runID string) (float64, *LLMResult, error) {
 	sentenceCh := make(chan string, 4)
 	var ttsWg sync.WaitGroup
 	var totalTTSMs float64
@@ -432,7 +387,7 @@ func (p *Pipeline) streamLLMWithTTS(ctx context.Context, transcript, ragContext,
 	var cf codeFilter
 
 	llmStart := time.Now()
-	llmResult, err := p.cfg.LLMClient.Chat(ctx, transcript, ragContext, p.cfg.SystemPrompt, p.cfg.LLMModel, p.cfg.LLMEngine, func(token string) {
+	llmResult, err := p.cfg.LLMClient.Chat(ctx, transcript, p.cfg.SystemPrompt, p.cfg.LLMModel, p.cfg.LLMEngine, func(token string) {
 		onEvent(Event{Type: "llm_token", Token: token})
 		filtered := cf.Filter(token)
 		if filtered == "" {
@@ -483,39 +438,47 @@ func (p *Pipeline) streamLLMWithTTS(ctx context.Context, transcript, ragContext,
 
 func (p *Pipeline) consumeSentences(ctx context.Context, sentenceCh <-chan string, ttsEngine string, onEvent EventCallback, totalMs *float64, mu *sync.Mutex, runID string) {
 	ttsOpts := TTSOptions{Speed: p.cfg.TTSSpeed, Pitch: p.cfg.TTSPitch}
-
 	for sentence := range sentenceCh {
-		sentence = StripMarkdown(sentence)
-		if sentence == "" {
-			continue
-		}
-		if p.cfg.TextNormalization {
-			sentence = NormalizeForSpeech(sentence)
-		}
-		ttsStart := time.Now()
-		ttsResult, err := p.cfg.TTSClient.Synthesize(ctx, sentence, ttsEngine, ttsOpts)
-		if p.cfg.Tracer != nil {
-			status, errMsg, out := "ok", "", ""
-			if err != nil {
-				status, errMsg = "error", err.Error()
-			}
-			if ttsResult != nil {
-				out = fmt.Sprintf("audio_bytes=%d", len(ttsResult.Audio))
-			}
-			p.cfg.Tracer.RecordSpan(runID, "tts", ttsStart, float64(time.Since(ttsStart).Milliseconds()), sentence, out, status, errMsg)
-		}
-		if err != nil {
-			slog.Error("tts sentence", "error", err, "text", sentence)
-			onEvent(Event{Type: "error", Text: err.Error()})
+		if err := p.synthesizeSentence(ctx, sentence, ttsEngine, ttsOpts, onEvent, totalMs, mu, runID); err != nil {
 			return
 		}
-		mu.Lock()
-		*totalMs += ttsResult.LatencyMs
-		mu.Unlock()
-		onEvent(Event{Type: "tts_ready", Audio: ttsResult.Audio, LatencyMs: ttsResult.LatencyMs})
-
-		if p.cfg.InterSentencePauseMs > 0 {
-			onEvent(Event{Type: "tts_ready", Audio: silenceWAV(p.cfg.InterSentencePauseMs, 24000)})
-		}
 	}
+}
+
+func (p *Pipeline) synthesizeSentence(ctx context.Context, sentence, ttsEngine string, ttsOpts TTSOptions, onEvent EventCallback, totalMs *float64, mu *sync.Mutex, runID string) error {
+	sentence = StripMarkdown(sentence)
+	if sentence == "" {
+		return nil
+	}
+	if p.cfg.TextNormalization {
+		sentence = NormalizeForSpeech(sentence)
+	}
+
+	ttsStart := time.Now()
+	ttsResult, err := p.cfg.TTSClient.Synthesize(ctx, sentence, ttsEngine, ttsOpts)
+	if p.cfg.Tracer != nil {
+		status, errMsg, out := "ok", "", ""
+		if err != nil {
+			status, errMsg = "error", err.Error()
+		}
+		if ttsResult != nil {
+			out = fmt.Sprintf("audio_bytes=%d", len(ttsResult.Audio))
+		}
+		p.cfg.Tracer.RecordSpan(runID, "tts", ttsStart, float64(time.Since(ttsStart).Milliseconds()), sentence, out, status, errMsg)
+	}
+	if err != nil {
+		slog.Error("tts sentence", "error", err, "text", sentence)
+		onEvent(Event{Type: "error", Text: err.Error()})
+		return err
+	}
+
+	mu.Lock()
+	*totalMs += ttsResult.LatencyMs
+	mu.Unlock()
+	onEvent(Event{Type: "tts_ready", Audio: ttsResult.Audio, LatencyMs: ttsResult.LatencyMs})
+
+	if p.cfg.InterSentencePauseMs > 0 {
+		onEvent(Event{Type: "tts_ready", Audio: silenceWAV(p.cfg.InterSentencePauseMs, 24000)})
+	}
+	return nil
 }

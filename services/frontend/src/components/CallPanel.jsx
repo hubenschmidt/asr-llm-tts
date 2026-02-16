@@ -640,7 +640,7 @@ export const CallPanel = () => {
               />
               <label class="tuning-label">
                 Pitch: {ttsPitch().toFixed(2)}
-                <Tooltip text="Voice pitch control. Affects ElevenLabs stability parameter. Lower = more stable/consistent, higher = more expressive/variable." />
+                <Tooltip text="Voice pitch control. Lower = more stable/consistent, higher = more expressive/variable." />
               </label>
               <input
                 type="range"

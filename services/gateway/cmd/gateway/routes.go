@@ -8,8 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/models"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/orchestrator"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/pipeline"
@@ -26,7 +24,7 @@ type deps struct {
 	svcMgr            *orchestrator.HTTPControlManager
 	gpu               *gpuHub
 	wsHandler         http.Handler
-	traceStore        *trace.SQLiteStore
+	traceStore        *trace.Store
 }
 
 // registerRoutes wires all HTTP endpoints to the shared mux.
@@ -34,7 +32,6 @@ type deps struct {
 // TTS warmup, ASR model management, and service orchestration CRUD.
 func registerRoutes(mux *http.ServeMux, d deps) {
 	mux.Handle("/ws/call", d.wsHandler)
-	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
@@ -363,7 +360,7 @@ func (fw *flushWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func registerTraceRoutes(mux *http.ServeMux, store *trace.SQLiteStore) {
+func registerTraceRoutes(mux *http.ServeMux, store *trace.Store) {
 	mux.HandleFunc("GET /api/traces/sessions", func(w http.ResponseWriter, r *http.Request) {
 		if store == nil {
 			http.Error(w, "tracing disabled", http.StatusNotFound)

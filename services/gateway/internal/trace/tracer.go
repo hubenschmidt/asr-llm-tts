@@ -25,14 +25,14 @@ type traceMsg struct {
 // Tracer writes trace data asynchronously via a buffered channel.
 // All methods are nil-safe (no-op on nil receiver).
 type Tracer struct {
-	store     *SQLiteStore
+	store     *Store
 	sessionID string
 	ch        chan traceMsg
 	done      chan struct{}
 }
 
 // NewTracer creates a tracer bound to a session. Must call Close when done.
-func NewTracer(store *SQLiteStore, sessionID string) *Tracer {
+func NewTracer(store *Store, sessionID string) *Tracer {
 	t := &Tracer{
 		store:     store,
 		sessionID: sessionID,
@@ -51,16 +51,16 @@ func (t *Tracer) drain() {
 }
 
 func (t *Tracer) handle(m traceMsg) {
-	var err error
-	switch m.kind {
-	case "run_create":
-		err = t.store.CreateRun(m.runID, m.sessionID)
-	case "run_update":
-		err = t.store.UpdateRun(m.runID, m.durationMs, m.transcript, m.response, m.status)
-	case "span":
-		err = t.store.CreateSpan(m.span)
+	handlers := map[string]func() error{
+		"run_create": func() error { return t.store.CreateRun(m.runID, m.sessionID) },
+		"run_update": func() error { return t.store.UpdateRun(m.runID, m.durationMs, m.transcript, m.response, m.status) },
+		"span":       func() error { return t.store.CreateSpan(m.span) },
 	}
-	if err != nil {
+	fn, ok := handlers[m.kind]
+	if !ok {
+		return
+	}
+	if err := fn(); err != nil {
 		slog.Warn("trace write failed", "kind", m.kind, "error", err)
 	}
 }

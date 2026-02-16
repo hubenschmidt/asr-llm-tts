@@ -14,6 +14,7 @@ import (
 	"github.com/openai/openai-go/v2/packages/param"
 
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/audio"
+	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/denoise"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/env"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/models"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/orchestrator"
@@ -27,15 +28,9 @@ import (
 type tuning struct {
 	LLMSystemPrompt    string  `json:"llm_system_prompt"`
 	LLMMaxTokens       int     `json:"llm_max_tokens"`
-	EmbeddingModel     string  `json:"embedding_model"`
 	ASRPoolSize        int     `json:"asr_pool_size"`
 	LLMPoolSize        int     `json:"llm_pool_size"`
 	TTSPoolSize        int     `json:"tts_pool_size"`
-	QdrantPoolSize     int     `json:"qdrant_pool_size"`
-	MaxConcurrentCalls int     `json:"max_concurrent_calls"`
-	VectorSize         int     `json:"vector_size"`
-	RAGTopK            int     `json:"rag_top_k"`
-	RAGScoreThreshold  float64 `json:"rag_score_threshold"`
 	VADSpeechThreshold float64 `json:"vad_speech_threshold_db"`
 	OpenAIURL          string  `json:"openai_url"`
 	OpenAIModel        string  `json:"openai_model"`
@@ -48,15 +43,9 @@ func defaultTuning() tuning {
 	return tuning{
 		LLMSystemPrompt:    "You are a helpful call center agent. Keep responses concise and conversational.",
 		LLMMaxTokens:       2048,
-		EmbeddingModel:     "nomic-embed-text",
 		ASRPoolSize:        50,
 		LLMPoolSize:        50,
 		TTSPoolSize:        50,
-		QdrantPoolSize:     10,
-		MaxConcurrentCalls: 100,
-		VectorSize:         768,
-		RAGTopK:            3,
-		RAGScoreThreshold:  0.7,
 		VADSpeechThreshold: -25,
 		OpenAIURL:          "https://api.openai.com",
 		OpenAIModel:        "gpt-4.1-nano",
@@ -90,18 +79,11 @@ func main() {
 	port := env.Str("GATEWAY_PORT", "8000")
 	ollamaURL := env.Str("OLLAMA_URL", "http://localhost:11434")
 	ollamaModel := env.Str("OLLAMA_MODEL", "llama3.2:3b")
-	piperURL := env.Str("PIPER_URL", "http://localhost:5100")
-	kokoroURL := env.Str("KOKORO_URL", "")
-	melottsURL := env.Str("MELOTTS_URL", "")
+	piperModelDir := env.Str("PIPER_MODEL_DIR", "/models")
 	whisperServerURL := env.Str("WHISPER_SERVER_URL", "")
 	whisperControlURL := env.Str("WHISPER_CONTROL_URL", "")
-	qdrantURL := env.Str("QDRANT_URL", "")
-	elevenlabsAPIKey := env.Str("ELEVENLABS_API_KEY", "")
-	elevenlabsVoiceID := env.Str("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
-	elevenlabsModelID := env.Str("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")
 	openaiAPIKey := env.Str("OPENAI_API_KEY", "")
 	anthropicAPIKey := env.Str("ANTHROPIC_API_KEY", "")
-	noisereduceURL := env.Str("NOISEREDUCE_URL", "")
 	audioclassifyURL := env.Str("AUDIOCLASSIFY_URL", "")
 
 	// Service orchestrator
@@ -117,35 +99,29 @@ func main() {
 	whisperPrompt := env.Str("WHISPER_PROMPT", "Customer service call transcript:")
 	asrRouter := initASR(whisperServerURL, t.ASRPoolSize, whisperPrompt)
 	llmRouter := initLLM(ollamaURL, ollamaModel, openaiAPIKey, anthropicAPIKey, t)
-	ttsClient := initTTS(piperURL, kokoroURL, melottsURL, elevenlabsAPIKey, elevenlabsVoiceID, elevenlabsModelID, t.TTSPoolSize)
-
-	// RAG + call history (nil when Qdrant not configured)
-	ragClient, callHistory := initRAG(ollamaURL, qdrantURL, t)
+	ttsClient := initTTS(piperModelDir)
 
 	// VAD config
 	vad := audio.DefaultVADConfig()
 	vad.SpeechThresholdDB = t.VADSpeechThreshold
 
-	var noiseClient *pipeline.NoiseClient
-	if noisereduceURL != "" {
-		noiseClient = pipeline.NewNoiseClient(noisereduceURL)
-	}
+	denoiser := denoise.New()
 
 	var classifyClient *pipeline.ClassifyClient
 	if audioclassifyURL != "" {
 		classifyClient = pipeline.NewClassifyClient(audioclassifyURL)
 	}
 
-	traceDBPath := env.Str("TRACE_DB_PATH", "")
-	var traceStore *trace.SQLiteStore
-	if traceDBPath != "" {
+	postgresURL := env.Str("POSTGRES_URL", "")
+	var traceStore *trace.Store
+	if postgresURL != "" {
 		var traceErr error
-		traceStore, traceErr = trace.Open(traceDBPath)
+		traceStore, traceErr = trace.Open(postgresURL)
 		if traceErr != nil {
 			slog.Error("trace store open failed", "error", traceErr)
 		}
 		if traceStore != nil {
-			slog.Info("tracing enabled", "path", traceDBPath)
+			slog.Info("tracing enabled", "postgres", postgresURL)
 		}
 	}
 
@@ -154,10 +130,7 @@ func main() {
 		LLMClient:     llmRouter,
 		TTSClient:     ttsClient,
 		VADConfig:     vad,
-		MaxConcurrent: t.MaxConcurrentCalls,
-		RAGClient:     ragClient,
-		CallHistory:   callHistory,
-		NoiseClient:    noiseClient,
+		Denoiser:       denoiser,
 		ClassifyClient: classifyClient,
 		TraceStore:     traceStore,
 	})
@@ -183,7 +156,7 @@ func main() {
 
 	go awaitShutdown(srv, ollamaURL, svcMgr)
 
-	slog.Info("gateway starting", "addr", addr, "max_concurrent", t.MaxConcurrentCalls)
+	slog.Info("gateway starting", "addr", addr)
 
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		slog.Error("server failed", "error", err)
@@ -212,40 +185,6 @@ func awaitShutdown(srv *http.Server, ollamaURL string, svcMgr *orchestrator.HTTP
 	stopRunningServices(ctx, svcMgr, "shutdown")
 
 	srv.Shutdown(ctx)
-}
-
-// initRAG sets up Qdrant-backed RAG and call history clients.
-// Returns nil for both when Qdrant is not configured.
-func initRAG(ollamaURL, qdrantURL string, t tuning) (*pipeline.RAGClient, *pipeline.CallHistoryClient) {
-	if qdrantURL == "" {
-		return nil, nil
-	}
-
-	embedClient := pipeline.NewEmbeddingClient(ollamaURL, t.EmbeddingModel, t.LLMPoolSize)
-	qdrantClient := pipeline.NewQdrantClient(qdrantURL, t.QdrantPoolSize)
-
-	initCtx, initCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer initCancel()
-
-	if err := qdrantClient.EnsureCollection(initCtx, "knowledge_base", t.VectorSize); err != nil {
-		slog.Warn("qdrant knowledge_base collection", "error", err)
-	}
-	if err := qdrantClient.EnsureCollection(initCtx, "call_history", t.VectorSize); err != nil {
-		slog.Warn("qdrant call_history collection", "error", err)
-	}
-
-	slog.Info("rag enabled", "qdrant", qdrantURL, "embedding_model", t.EmbeddingModel)
-
-	ragClient := pipeline.NewRAGClient(pipeline.RAGConfig{
-		Embedder:       embedClient,
-		Qdrant:         qdrantClient,
-		Collection:     "knowledge_base",
-		TopK:           t.RAGTopK,
-		ScoreThreshold: t.RAGScoreThreshold,
-	})
-	callHistory := pipeline.NewCallHistoryClient(embedClient, qdrantClient, "call_history")
-
-	return ragClient, callHistory
 }
 
 func initASR(whisperServerURL string, poolSize int, prompt string) *pipeline.ASRRouter {
@@ -280,21 +219,11 @@ func initLLM(ollamaURL, ollamaModel, openaiAPIKey, anthropicAPIKey string, t tun
 	return router
 }
 
-func initTTS(piperURL, kokoroURL, melottsURL, elevenlabsAPIKey, elevenlabsVoiceID, elevenlabsModelID string, poolSize int) *pipeline.TTSRouter {
-	httpClient := pipeline.NewPooledHTTPClient(poolSize, 30*time.Second)
+func initTTS(piperModelDir string) *pipeline.TTSRouter {
 	backends := map[string]pipeline.TTSSynthesizer{
-		"fast":    pipeline.NewPiperSynthesizer(piperURL, "en_US-lessac-low", httpClient),
-		"quality": pipeline.NewPiperSynthesizer(piperURL, "en_US-lessac-medium", httpClient),
-		"high":    pipeline.NewPiperSynthesizer(piperURL, "en_US-lessac-high", httpClient),
-	}
-	if kokoroURL != "" {
-		backends["kokoro"] = pipeline.NewOpenAISynthesizer(kokoroURL, "kokoro", "af_heart", httpClient)
-	}
-	if melottsURL != "" {
-		backends["melotts"] = pipeline.NewMeloSynthesizer(melottsURL, httpClient)
-	}
-	if elevenlabsAPIKey != "" {
-		backends["elevenlabs"] = pipeline.NewElevenLabsSynthesizer(elevenlabsAPIKey, elevenlabsVoiceID, elevenlabsModelID, httpClient)
+		"fast":    pipeline.NewPiperSynthesizer(piperModelDir, "en_US-lessac-low"),
+		"quality": pipeline.NewPiperSynthesizer(piperModelDir, "en_US-lessac-medium"),
+		"high":    pipeline.NewPiperSynthesizer(piperModelDir, "en_US-lessac-high"),
 	}
 	return pipeline.NewTTSRouter(backends, "fast")
 }

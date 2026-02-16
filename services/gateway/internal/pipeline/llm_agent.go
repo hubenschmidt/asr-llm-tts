@@ -9,7 +9,6 @@ import (
 	"github.com/nlpodyssey/openai-agents-go/modelsettings"
 	"github.com/openai/openai-go/v2/packages/param"
 
-	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/metrics"
 )
 
 // AgentLLM routes LLM requests to the correct provider using the openai-agents-go SDK.
@@ -74,13 +73,13 @@ func (a *AgentLLM) Has(engine string) bool {
 
 // Chat streams a completion from the resolved provider.
 // Raw clients (registered via RegisterRaw) bypass the SDK entirely.
-func (a *AgentLLM) Chat(ctx context.Context, userMessage, ragContext, systemPrompt, model, engine string, onToken TokenCallback) (*LLMResult, error) {
+func (a *AgentLLM) Chat(ctx context.Context, userMessage, systemPrompt, model, engine string, onToken TokenCallback) (*LLMResult, error) {
 	if raw, ok := a.rawClients[engine]; ok {
 		useModel := model
 		if useModel == "" {
 			useModel = a.models[engine]
 		}
-		return raw.Chat(ctx, userMessage, ragContext, systemPrompt, useModel, onToken)
+		return raw.Chat(ctx, userMessage, systemPrompt, useModel, onToken)
 	}
 
 	provider, useModel, err := a.resolve(engine, model)
@@ -88,13 +87,8 @@ func (a *AgentLLM) Chat(ctx context.Context, userMessage, ragContext, systemProm
 		return nil, err
 	}
 
-	instructions := systemPrompt
-	if ragContext != "" {
-		instructions += "\n\nRelevant context from knowledge base:\n" + ragContext
-	}
-
 	agent := agents.New("assistant").
-		WithInstructions(instructions).
+		WithInstructions(systemPrompt).
 		WithModel(useModel).
 		WithModelSettings(modelsettings.ModelSettings{
 			MaxTokens: param.NewOpt(int64(a.maxTokens)),
@@ -110,7 +104,6 @@ func (a *AgentLLM) Chat(ctx context.Context, userMessage, ragContext, systemProm
 
 	events, errCh, err := runner.RunStreamedChan(ctx, agent, userMessage)
 	if err != nil {
-		metrics.Errors.WithLabelValues("llm", "http").Inc()
 		return nil, fmt.Errorf("llm stream start: %w", err)
 	}
 
@@ -133,12 +126,10 @@ func (a *AgentLLM) Chat(ctx context.Context, userMessage, ragContext, systemProm
 	}
 
 	if streamErr := <-errCh; streamErr != nil {
-		metrics.Errors.WithLabelValues("llm", "stream").Inc()
 		return nil, fmt.Errorf("llm stream: %w", streamErr)
 	}
 
 	latency := time.Since(start)
-	metrics.StageDuration.WithLabelValues("llm").Observe(latency.Seconds())
 
 	ttft := float64(0)
 	if !sr.ttft.IsZero() {

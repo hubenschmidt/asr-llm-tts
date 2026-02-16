@@ -170,17 +170,6 @@ export const ConfigSidebar = (props) => {
                 <option value="quality">Piper Quality, balanced (17MB)</option>
                 <option value="high">Piper High, most natural (109MB)</option>
               </optgroup>
-              <optgroup label="Other Engines">
-                <option value="kokoro">Kokoro, professional, CPU (82M)</option>
-                <option value="melotts">MeloTTS, CPU real-time, multi-accent (208M)</option>
-                <option
-                  value="elevenlabs"
-                  disabled={!c.availableTTS().includes("elevenlabs")}
-                >
-                  ElevenLabs, cloud API, low latency
-                  {!c.availableTTS().includes("elevenlabs") ? " — not configured" : ""}
-                </option>
-              </optgroup>
             </select>
             <Show when={c.loadingTTS()}>
               <span class="spinner" />

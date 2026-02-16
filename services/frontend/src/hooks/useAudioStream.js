@@ -8,7 +8,13 @@ const downsample = (samples, srcRate, dstRate) => {
   if (!dstRate || srcRate <= dstRate) return samples;
   const ratio = srcRate / dstRate;
   const out = new Float32Array(Math.floor(samples.length / ratio));
-  for (let i = 0; i < out.length; i++) out[i] = samples[Math.floor(i * ratio)];
+  for (let i = 0; i < out.length; i++) {
+    const start = Math.floor(i * ratio);
+    const end = Math.min(Math.floor((i + 1) * ratio), samples.length);
+    let sum = 0;
+    for (let j = start; j < end; j++) sum += samples[j];
+    out[i] = sum / (end - start);
+  }
   return out;
 };
 

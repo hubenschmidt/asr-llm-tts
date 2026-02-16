@@ -8,10 +8,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/audio"
-	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/metrics"
+	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/denoise"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/pipeline"
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/trace"
 )
@@ -28,30 +29,19 @@ type HandlerConfig struct {
 	LLMClient     *pipeline.AgentLLM
 	TTSClient     *pipeline.TTSRouter
 	VADConfig     audio.VADConfig
-	MaxConcurrent int
-	RAGClient     *pipeline.RAGClient
-	CallHistory   *pipeline.CallHistoryClient
-	NoiseClient    *pipeline.NoiseClient
+	Denoiser       *denoise.Denoiser
 	ClassifyClient *pipeline.ClassifyClient
-	TraceStore     *trace.SQLiteStore
+	TraceStore     *trace.Store
 }
 
-// Handler manages WebSocket call sessions with admission control.
+// Handler manages WebSocket call sessions.
 type Handler struct {
 	cfg HandlerConfig
-	sem chan struct{}
 }
 
-// NewHandler creates a WebSocket handler with shared backend clients and concurrency limit.
+// NewHandler creates a WebSocket handler with shared backend clients.
 func NewHandler(cfg HandlerConfig) *Handler {
-	maxConc := cfg.MaxConcurrent
-	if maxConc <= 0 {
-		maxConc = 100
-	}
-	return &Handler{
-		cfg: cfg,
-		sem: make(chan struct{}, maxConc),
-	}
+	return &Handler{cfg: cfg}
 }
 
 // callMetadata is the first text frame sent by the client.
@@ -86,14 +76,6 @@ type wsAction struct {
 // ServeHTTP upgrades the connection and runs the call session.
 // Returns 503 if at max concurrent call capacity.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	select {
-	case h.sem <- struct{}{}:
-		defer func() { <-h.sem }()
-	default:
-		http.Error(w, "at capacity", http.StatusServiceUnavailable)
-		return
-	}
-
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		slog.Error("websocket upgrade failed", "error", err)
@@ -101,11 +83,82 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	metrics.CallsActive.Inc()
-	metrics.CallsTotal.Inc()
-	defer metrics.CallsActive.Dec()
-
 	h.runSession(conn)
+}
+
+// sessionParams holds resolved metadata with defaults applied.
+type sessionParams struct {
+	codec               audio.Codec
+	ttsEngine           string
+	asrEngine           string
+	sampleRate          int
+	systemPrompt        string
+	llmEngine           string
+	mode                string
+	confidenceThreshold float64
+	ttsSpeed            float64
+	textNorm            bool
+	vadCfg              audio.VADConfig
+}
+
+var metaDefaults = map[string]string{
+	"tts_engine":    "fast",
+	"asr_engine":    "whisper.cpp",
+	"llm_engine":    "ollama",
+	"system_prompt": "You are a helpful call center agent. Keep responses concise and conversational.",
+}
+
+func resolveParams(meta *callMetadata, baseCfg audio.VADConfig) sessionParams {
+	ttsEngine := orDefault(meta.TTSEngine, metaDefaults["tts_engine"])
+	asrEngine := orDefault(meta.ASREngine, metaDefaults["asr_engine"])
+	llmEngine := orDefault(meta.LLMEngine, metaDefaults["llm_engine"])
+	systemPrompt := orDefault(meta.SystemPrompt, metaDefaults["system_prompt"])
+
+	sampleRate := meta.SampleRate
+	if sampleRate <= 0 {
+		sampleRate = 16000
+	}
+	confidenceThreshold := meta.ConfidenceThreshold
+	if confidenceThreshold <= 0 {
+		confidenceThreshold = 0.6
+	}
+	ttsSpeed := meta.TTSSpeed
+	if ttsSpeed <= 0 {
+		ttsSpeed = 1.0
+	}
+	textNorm := true
+	if meta.TextNormalization != nil {
+		textNorm = *meta.TextNormalization
+	}
+
+	vadCfg := baseCfg
+	if meta.VADSilenceTimeoutMs > 0 {
+		vadCfg.SilenceTimeout = time.Duration(meta.VADSilenceTimeoutMs) * time.Millisecond
+	}
+	if meta.VADMinSpeechMs > 0 {
+		vadCfg.MinSpeechDuration = time.Duration(meta.VADMinSpeechMs) * time.Millisecond
+	}
+
+	return sessionParams{
+		codec:               audio.Codec(meta.Codec),
+		ttsEngine:           ttsEngine,
+		asrEngine:           asrEngine,
+		sampleRate:          sampleRate,
+		systemPrompt:        systemPrompt,
+		llmEngine:           llmEngine,
+		mode:                meta.Mode,
+		confidenceThreshold: confidenceThreshold,
+		ttsSpeed:            ttsSpeed,
+		textNorm:            textNorm,
+		vadCfg:              vadCfg,
+	}
+}
+
+func orDefault(val, fallback string) string {
+	if val != "" {
+		return val
+	}
+	return fallback
 }
 
 func (h *Handler) runSession(conn *websocket.Conn) {
@@ -118,36 +171,12 @@ func (h *Handler) runSession(conn *websocket.Conn) {
 		return
 	}
 
-	codec := audio.Codec(meta.Codec)
-	ttsEngine := meta.TTSEngine
-	if ttsEngine == "" {
-		ttsEngine = "fast"
-	}
-	asrEngine := meta.ASREngine
-	if asrEngine == "" {
-		asrEngine = "whisper.cpp"
-	}
+	sp := resolveParams(meta, h.cfg.VADConfig)
+	sessionID := uuid.NewString()
 
-	sampleRate := meta.SampleRate
-	if sampleRate <= 0 {
-		sampleRate = 16000
-	}
-
-	sessionID := pipeline.GenerateUUID()
-	systemPrompt := meta.SystemPrompt
-	if systemPrompt == "" {
-		systemPrompt = "You are a helpful call center agent. Keep responses concise and conversational."
-	}
-	llmEngine := meta.LLMEngine
-	if llmEngine == "" {
-		llmEngine = "ollama"
-	}
-
-	mode := meta.Mode
-
-	noiseClient := h.cfg.NoiseClient
-	if !meta.NoiseSuppression {
-		noiseClient = nil
+	var denoiser *denoise.Denoiser
+	if meta.NoiseSuppression {
+		denoiser = h.cfg.Denoiser
 	}
 
 	classifyClient := h.cfg.ClassifyClient
@@ -155,36 +184,10 @@ func (h *Handler) runSession(conn *websocket.Conn) {
 		classifyClient = nil
 	}
 
-	confidenceThreshold := meta.ConfidenceThreshold
-	if confidenceThreshold <= 0 {
-		confidenceThreshold = 0.6
-	}
+	slog.Info("call started", "session_id", sessionID, "codec", sp.codec, "sample_rate", sp.sampleRate, "tts_engine", sp.ttsEngine, "asr_engine", sp.asrEngine, "llm_engine", sp.llmEngine, "mode", sp.mode, "noise_suppression", meta.NoiseSuppression, "confidence_threshold", sp.confidenceThreshold, "tts_speed", sp.ttsSpeed)
 
-	ttsSpeed := meta.TTSSpeed
-	if ttsSpeed <= 0 {
-		ttsSpeed = 1.0
-	}
-
-	textNorm := true
-	if meta.TextNormalization != nil {
-		textNorm = *meta.TextNormalization
-	}
-
-	vadCfg := h.cfg.VADConfig
-	if meta.VADSilenceTimeoutMs > 0 {
-		vadCfg.SilenceTimeout = time.Duration(meta.VADSilenceTimeoutMs) * time.Millisecond
-	}
-	if meta.VADMinSpeechMs > 0 {
-		vadCfg.MinSpeechDuration = time.Duration(meta.VADMinSpeechMs) * time.Millisecond
-	}
-
-	slog.Info("call started", "session_id", sessionID, "codec", codec, "sample_rate", sampleRate, "tts_engine", ttsEngine, "asr_engine", asrEngine, "llm_engine", llmEngine, "mode", mode, "noise_suppression", meta.NoiseSuppression, "confidence_threshold", confidenceThreshold, "tts_speed", ttsSpeed)
-
-	var tracer *trace.Tracer
-	if h.cfg.TraceStore != nil {
-		metaJSON, _ := json.Marshal(meta)
-		_ = h.cfg.TraceStore.CreateSession(sessionID, string(metaJSON))
-		tracer = trace.NewTracer(h.cfg.TraceStore, sessionID)
+	tracer := h.startTracer(sessionID, meta)
+	if tracer != nil {
 		defer func() {
 			tracer.Close()
 			_ = h.cfg.TraceStore.EndSession(sessionID)
@@ -195,21 +198,19 @@ func (h *Handler) runSession(conn *websocket.Conn) {
 		ASRClient:            h.cfg.ASRClient,
 		LLMClient:            h.cfg.LLMClient,
 		TTSClient:            h.cfg.TTSClient,
-		VADConfig:            vadCfg,
-		RAGClient:            h.cfg.RAGClient,
-		CallHistory:          h.cfg.CallHistory,
-		NoiseClient:          noiseClient,
+		VADConfig:            sp.vadCfg,
+		Denoiser:             denoiser,
 		NoiseSuppression:     meta.NoiseSuppression,
 		SessionID:            sessionID,
-		SystemPrompt:         systemPrompt,
+		SystemPrompt:         sp.systemPrompt,
 		LLMModel:             meta.LLMModel,
-		LLMEngine:            llmEngine,
+		LLMEngine:            sp.llmEngine,
 		ASRPrompt:            meta.ASRPrompt,
-		ConfidenceThreshold:  confidenceThreshold,
+		ConfidenceThreshold:  sp.confidenceThreshold,
 		ReferenceTranscript:  meta.ReferenceTranscript,
-		TTSSpeed:             ttsSpeed,
+		TTSSpeed:             sp.ttsSpeed,
 		TTSPitch:             meta.TTSPitch,
-		TextNormalization:    textNorm,
+		TextNormalization:    sp.textNorm,
 		InterSentencePauseMs: meta.InterSentencePauseMs,
 		ClassifyClient:       classifyClient,
 		AudioClassification:  meta.AudioClassification,
@@ -217,10 +218,19 @@ func (h *Handler) runSession(conn *websocket.Conn) {
 	})
 
 	sendEvent := newEventSender(conn)
-	processMessages(ctx, conn, pipe, codec, sampleRate, ttsEngine, asrEngine, sendEvent, mode)
-	flushIfNeeded(ctx, mode, pipe, ttsEngine, asrEngine, sendEvent)
+	processMessages(ctx, conn, pipe, sp.codec, sp.sampleRate, sp.ttsEngine, sp.asrEngine, sendEvent, sp.mode)
+	flushIfNeeded(ctx, sp.mode, pipe, sp.ttsEngine, sp.asrEngine, sendEvent)
 
 	slog.Info("call ended")
+}
+
+func (h *Handler) startTracer(sessionID string, meta *callMetadata) *trace.Tracer {
+	if h.cfg.TraceStore == nil {
+		return nil
+	}
+	metaJSON, _ := json.Marshal(meta)
+	_ = h.cfg.TraceStore.CreateSession(sessionID, string(metaJSON))
+	return trace.NewTracer(h.cfg.TraceStore, sessionID)
 }
 
 // processMessages reads frames from the WebSocket in a loop.

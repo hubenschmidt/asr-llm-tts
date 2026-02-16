@@ -1,4 +1,22 @@
 services:
+  postgres:
+    image: postgres:17-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: gateway
+      POSTGRES_PASSWORD: gateway
+      POSTGRES_DB: gateway
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gateway"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
   gateway:
     build:
       context: ./services/gateway
@@ -7,11 +25,9 @@ services:
       - "${GATEWAY_PORT:-8000}:8000"
     env_file: .env
     depends_on:
-      # noisereduce:
-      #   condition: service_healthy
-      audioclassify:
+      postgres:
         condition: service_healthy
-      piper:
+      audioclassify:
         condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -46,38 +62,6 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # qdrant:
-  #   image: qdrant/qdrant:v1.9.4
-  #   ports:
-  #     - "${QDRANT_PORT:-6333}:6333"
-  #   volumes:
-  #     - qdrant-data:/qdrant/storage
-  #   healthcheck:
-  #     test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333'"]
-  #     interval: 5s
-  #     timeout: 3s
-  #     retries: 10
-  #     start_period: 5s
-  #   restart: unless-stopped
-
-  # noisereduce:
-  #   build:
-  #     context: ./services/noisereduce
-  #     dockerfile: Dockerfile
-  #   ports:
-  #     - "5200:5200"
-  #   volumes:
-  #     - ./services/noisereduce/src:/app/src
-  #     - ./services/noisereduce/Cargo.toml:/app/Cargo.toml
-  #     - noisereduce-target:/app/target
-  #   healthcheck:
-  #     test: ["CMD", "curl", "-f", "http://localhost:5200/health"]
-  #     interval: 10s
-  #     timeout: 5s
-  #     retries: 5
-  #     start_period: 30s
-  #   restart: unless-stopped
-
   audioclassify:
     build:
       context: ./services/audioclassify
@@ -109,99 +93,8 @@ services:
       start_period: 180s
     restart: unless-stopped
 
-  # --- commented out services ---
-
-  piper:
-    build:
-      context: ./services/piper
-      dockerfile: Dockerfile
-    ports:
-      - "5100:5100"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5100/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    restart: unless-stopped
-
-  # prometheus:
-  #   image: prom/prometheus:v2.51.0
-  #   ports:
-  #     - "${PROMETHEUS_PORT:-9090}:9090"
-  #   volumes:
-  #     - ./services/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-  #   extra_hosts:
-  #     - "host.docker.internal:host-gateway"
-  #   restart: unless-stopped
-
-  # grafana:
-  #   image: grafana/grafana:10.4.0
-  #   ports:
-  #     - "${GRAFANA_PORT:-3002}:3000"
-  #   environment:
-  #     - GF_SECURITY_ADMIN_PASSWORD=admin
-  #     - GF_AUTH_ANONYMOUS_ENABLED=true
-  #     - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
-  #   volumes:
-  #     - ./services/monitoring/grafana:/etc/grafana/provisioning
-  #   depends_on:
-  #     - prometheus
-  #   restart: unless-stopped
-
-  # seed:
-  #   build:
-  #     context: ./services/gateway
-  #     dockerfile: Dockerfile.seed
-  #   command: ["--dir", "/knowledge"]
-  #   env_file: .env
-  #   extra_hosts:
-  #     - "host.docker.internal:host-gateway"
-  #   volumes:
-  #     - ./samples/knowledge:/knowledge:ro
-  #   depends_on:
-  #     qdrant:
-  #       condition: service_healthy
-  #   restart: "no"
-
-  # kokoro:
-  #   image: ghcr.io/remsky/kokoro-fastapi-cpu:v0.2.4
-  #   ports:
-  #     - "8880:8880"
-  #   healthcheck:
-  #     test: ["CMD-SHELL", "curl -sf http://localhost:8880/v1/models || exit 1"]
-  #     interval: 60s
-  #     timeout: 5s
-  #     retries: 5
-  #     start_period: 120s
-  #   profiles:
-  #     - ml
-  #   restart: unless-stopped
-
-  # melotts:
-  #   image: timhagel/melotts-api-server
-  #   ports:
-  #     - "8888:8888"
-  #   environment:
-  #     - DEFAULT_SPEED=1.0
-  #   profiles:
-  #     - ml
-  #   restart: unless-stopped
-
-  # loadtest:
-  #   build:
-  #     context: ./services/loadtest
-  #     dockerfile: Dockerfile
-  #   volumes:
-  #     - ./samples:/samples:ro
-  #   extra_hosts:
-  #     - "host.docker.internal:host-gateway"
-  #   profiles:
-  #     - tools
-
 volumes:
+  postgres-data:
   go-mod-cache:
   go-build-cache:
   node-modules:
-  # noisereduce-target:
-  # qdrant-data:

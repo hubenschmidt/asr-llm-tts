@@ -7,7 +7,7 @@ import (
 
 // LLMChatClient produces streaming chat completions from a user message.
 type LLMChatClient interface {
-	Chat(ctx context.Context, userMessage, ragContext, systemPrompt, model string, onToken TokenCallback) (*LLMResult, error)
+	Chat(ctx context.Context, userMessage, systemPrompt, model string, onToken TokenCallback) (*LLMResult, error)
 }
 
 // LLMResult holds the complete LLM response with timing.
