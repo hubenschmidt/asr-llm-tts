@@ -21,8 +21,9 @@ type ASRTranscriber interface {
 
 // ASRResult holds the transcription output.
 type ASRResult struct {
-	Text      string  `json:"text"`
-	LatencyMs float64 `json:"latency_ms"`
+	Text         string  `json:"text"`
+	LatencyMs    float64 `json:"latency_ms"`
+	NoSpeechProb float64 `json:"no_speech_prob"`
 }
 
 // ASRRouter dispatches to the correct ASR backend based on engine name.
@@ -52,15 +53,17 @@ type MultipartASRClient struct {
 	url      string
 	endpoint string
 	label    string
+	prompt   string
 	client   *http.Client
 }
 
 // NewASRClient creates a client for whisper.cpp (/inference endpoint).
-func NewASRClient(url string, poolSize int) *MultipartASRClient {
+func NewASRClient(url string, poolSize int, prompt string) *MultipartASRClient {
 	return &MultipartASRClient{
 		url:      url,
 		endpoint: "/inference",
 		label:    "whisper",
+		prompt:   prompt,
 		client:   NewPooledHTTPClient(poolSize, 30*time.Second),
 	}
 }
@@ -69,7 +72,7 @@ func NewASRClient(url string, poolSize int) *MultipartASRClient {
 func (c *MultipartASRClient) Transcribe(ctx context.Context, samples []float32) (*ASRResult, error) {
 	start := time.Now()
 
-	body, contentType, err := buildMultipartAudio(samples)
+	body, contentType, err := buildMultipartAudio(samples, c.prompt)
 	if err != nil {
 		return nil, err
 	}
@@ -102,18 +105,20 @@ func (c *MultipartASRClient) Transcribe(ctx context.Context, samples []float32) 
 	metrics.StageDuration.WithLabelValues("asr").Observe(latency.Seconds())
 
 	return &ASRResult{
-		Text:      result.Text,
-		LatencyMs: float64(latency.Milliseconds()),
+		Text:         result.Text,
+		LatencyMs:    float64(latency.Milliseconds()),
+		NoSpeechProb: result.NoSpeechProb,
 	}, nil
 }
 
 type whisperResponse struct {
-	Text string `json:"text"`
+	Text         string  `json:"text"`
+	NoSpeechProb float64 `json:"no_speech_prob"`
 }
 
 // --- shared helpers ---
 
-func buildMultipartAudio(samples []float32) (*bytes.Buffer, string, error) {
+func buildMultipartAudio(samples []float32, prompt string) (*bytes.Buffer, string, error) {
 	wavData := audio.SamplesToWAV(samples, 16000)
 
 	var body bytes.Buffer
@@ -126,6 +131,12 @@ func buildMultipartAudio(samples []float32) (*bytes.Buffer, string, error) {
 
 	if _, err = part.Write(wavData); err != nil {
 		return nil, "", fmt.Errorf("write wav data: %w", err)
+	}
+
+	if prompt != "" {
+		if err = writer.WriteField("initial_prompt", prompt); err != nil {
+			return nil, "", fmt.Errorf("write prompt field: %w", err)
+		}
 	}
 
 	if err = writer.Close(); err != nil {

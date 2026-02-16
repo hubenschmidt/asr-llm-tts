@@ -29,6 +29,7 @@ type HandlerConfig struct {
 	MaxConcurrent int
 	RAGClient     *pipeline.RAGClient
 	CallHistory   *pipeline.CallHistoryClient
+	NoiseClient   *pipeline.NoiseClient
 }
 
 // Handler manages WebSocket call sessions with admission control.
@@ -51,14 +52,18 @@ func NewHandler(cfg HandlerConfig) *Handler {
 
 // callMetadata is the first text frame sent by the client.
 type callMetadata struct {
-	Codec        string `json:"codec"`
-	SampleRate   int    `json:"sample_rate"`
-	TTSEngine    string `json:"tts_engine"`
-	STTEngine    string `json:"stt_engine"`
-	SystemPrompt string `json:"system_prompt"`
-	LLMModel     string `json:"llm_model"`
-	LLMEngine    string `json:"llm_engine"`
-	Mode         string `json:"mode"`
+	Codec               string  `json:"codec"`
+	SampleRate          int     `json:"sample_rate"`
+	TTSEngine           string  `json:"tts_engine"`
+	STTEngine           string  `json:"stt_engine"`
+	SystemPrompt        string  `json:"system_prompt"`
+	LLMModel            string  `json:"llm_model"`
+	LLMEngine           string  `json:"llm_engine"`
+	Mode                string  `json:"mode"`
+	NoiseSuppression    bool    `json:"noise_suppression"`
+	ASRPrompt           string  `json:"asr_prompt"`
+	ConfidenceThreshold float64 `json:"confidence_threshold"`
+	ReferenceTranscript string  `json:"reference_transcript"`
 }
 
 // wsAction is a text frame sent during a session (chat message, snippet process, etc).
@@ -128,19 +133,34 @@ func (h *Handler) runSession(conn *websocket.Conn) {
 	}
 
 	mode := meta.Mode
-	slog.Info("call started", "session_id", sessionID, "codec", codec, "sample_rate", sampleRate, "tts_engine", ttsEngine, "stt_engine", sttEngine, "llm_engine", llmEngine, "mode", mode)
+
+	noiseClient := h.cfg.NoiseClient
+	if !meta.NoiseSuppression {
+		noiseClient = nil
+	}
+
+	confidenceThreshold := meta.ConfidenceThreshold
+	if confidenceThreshold <= 0 {
+		confidenceThreshold = 0.6
+	}
+
+	slog.Info("call started", "session_id", sessionID, "codec", codec, "sample_rate", sampleRate, "tts_engine", ttsEngine, "stt_engine", sttEngine, "llm_engine", llmEngine, "mode", mode, "noise_suppression", meta.NoiseSuppression, "confidence_threshold", confidenceThreshold)
 
 	pipe := pipeline.New(pipeline.Config{
-		ASRClient:    h.cfg.ASRClient,
-		LLMClient:    h.cfg.LLMClient,
-		TTSClient:    h.cfg.TTSClient,
-		VADConfig:    h.cfg.VADConfig,
-		RAGClient:    h.cfg.RAGClient,
-		CallHistory:  h.cfg.CallHistory,
-		SessionID:    sessionID,
-		SystemPrompt: systemPrompt,
-		LLMModel:     meta.LLMModel,
-		LLMEngine:    llmEngine,
+		ASRClient:           h.cfg.ASRClient,
+		LLMClient:           h.cfg.LLMClient,
+		TTSClient:           h.cfg.TTSClient,
+		VADConfig:           h.cfg.VADConfig,
+		RAGClient:           h.cfg.RAGClient,
+		CallHistory:         h.cfg.CallHistory,
+		NoiseClient:         noiseClient,
+		SessionID:           sessionID,
+		SystemPrompt:        systemPrompt,
+		LLMModel:            meta.LLMModel,
+		LLMEngine:           llmEngine,
+		ASRPrompt:           meta.ASRPrompt,
+		ConfidenceThreshold: confidenceThreshold,
+		ReferenceTranscript: meta.ReferenceTranscript,
 	})
 
 	sendEvent := newEventSender(conn)

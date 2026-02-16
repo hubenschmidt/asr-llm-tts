@@ -460,7 +460,8 @@
   opacity: 0;
   position: absolute;
   top: calc(100% + 6px);
-  left: 0;
+  left: 50%;
+  transform: translateX(-50%);
   background: #0f1420;
   border: 1px solid #1a2535;
   border-radius: 4px;
@@ -474,6 +475,21 @@
   z-index: 10;
   transition: opacity 150ms;
   pointer-events: none;
+}
+
+.sidebar-right .tooltip {
+  left: 0;
+  right: 0;
+  width: auto;
+  transform: none;
+}
+
+.sidebar-right .tuning-section .tooltip-wrap {
+  position: static;
+}
+
+.sidebar-right .tuning-section {
+  position: relative;
 }
 
 /* === Section divider in left sidebar === */
@@ -627,4 +643,52 @@
 .explain-icon:hover {
   color: #00b8d4;
   border-color: #00b8d4;
+}
+
+/* === STT Tuning section === */
+.tuning-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tuning-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #8090a0;
+  cursor: pointer;
+}
+
+.tuning-row input[type="checkbox"] {
+  accent-color: #00b8d4;
+}
+
+.tuning-label {
+  font-size: 10px;
+  color: #4a6880;
+  letter-spacing: 0.5px;
+}
+
+.tuning-input {
+  padding: 4px 6px;
+  border-radius: 3px;
+  border: 1px solid #1a2535;
+  background: #0b0e17;
+  color: #c0c8d8;
+  font-size: 11px;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.tuning-input:focus {
+  outline: none;
+  border-color: #00b8d4;
+}
+
+.tuning-range {
+  width: 100%;
+  accent-color: #00b8d4;
 }

@@ -14,16 +14,20 @@ import (
 
 // Config holds pipeline configuration.
 type Config struct {
-	ASRClient    *ASRRouter
-	LLMClient    *AgentLLM
-	TTSClient    *TTSRouter
-	VADConfig    audio.VADConfig
-	RAGClient    *RAGClient
-	CallHistory  *CallHistoryClient
-	SessionID    string
-	SystemPrompt string
-	LLMModel     string
-	LLMEngine    string
+	ASRClient           *ASRRouter
+	LLMClient           *AgentLLM
+	TTSClient           *TTSRouter
+	VADConfig           audio.VADConfig
+	RAGClient           *RAGClient
+	CallHistory         *CallHistoryClient
+	SessionID           string
+	SystemPrompt        string
+	LLMModel            string
+	LLMEngine           string
+	NoiseClient         *NoiseClient
+	ASRPrompt           string
+	ConfidenceThreshold float64
+	ReferenceTranscript string
 }
 
 // turn holds one user→assistant exchange for conversation history.
@@ -74,9 +78,18 @@ func (p *Pipeline) ProcessChunk(ctx context.Context, data []byte, codec audio.Co
 		return fmt.Errorf("decode: %w", err)
 	}
 
-	slog.Debug("ProcessChunk", "raw_bytes", len(data), "decoded_samples", len(samples), "srcRate", srcRate, "sampleRate_arg", sampleRate)
-
 	resampled := audio.Resample(samples, srcRate, 16000) // needs to be resampled at 16 kHz for Whisper model consumption
+
+	if p.cfg.NoiseClient != nil {
+		denoised, nErr := p.cfg.NoiseClient.Denoise(ctx, resampled)
+		if nErr != nil {
+			slog.Warn("noise suppression failed, using raw audio", "error", nErr)
+		}
+		if nErr == nil {
+			resampled = denoised
+		}
+	}
+
 	result := p.vad.Process(resampled)
 
 	if !result.SpeechEnded {
@@ -171,12 +184,23 @@ func (p *Pipeline) runFullPipeline(ctx context.Context, speechAudio []float32, t
 	}
 
 	transcript := strings.TrimSpace(asrResult.Text)
-	if transcript == "" || isNoiseTranscript(transcript) {
+	threshold := p.cfg.ConfidenceThreshold
+	if threshold == 0 {
+		threshold = 0.6
+	}
+	if transcript == "" || asrResult.NoSpeechProb > threshold || isNoiseTranscript(transcript) {
+		metrics.ASRNoiseFiltered.Inc()
 		return nil
 	}
 
-	slog.Info("transcript", "text", transcript, "asr_ms", asrResult.LatencyMs)
+	metrics.ASRNoSpeechProb.Observe(asrResult.NoSpeechProb)
+	slog.Info("transcript", "text", transcript, "asr_ms", asrResult.LatencyMs, "no_speech_prob", asrResult.NoSpeechProb)
 	onEvent(Event{Type: "transcript", Text: transcript, LatencyMs: asrResult.LatencyMs})
+
+	if p.cfg.ReferenceTranscript != "" {
+		wer := ComputeWER(p.cfg.ReferenceTranscript, transcript)
+		slog.Info("wer_eval", "reference", p.cfg.ReferenceTranscript, "hypothesis", transcript, "wer", wer)
+	}
 
 	// RAG — retrieve relevant context (non-fatal on error)
 	ragContext := p.retrieveRAGContext(ctx, transcript)

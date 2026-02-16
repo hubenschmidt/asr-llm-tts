@@ -54,4 +54,15 @@ var (
 		Help:    "RAG retrieval latency (embed + search)",
 		Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.2, 0.5},
 	})
+
+	ASRNoSpeechProb = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "asr_no_speech_prob",
+		Help:    "Whisper no_speech_prob per accepted segment",
+		Buckets: []float64{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0},
+	})
+
+	ASRNoiseFiltered = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "asr_noise_filtered_total",
+		Help: "Transcripts dropped by confidence or noise filter",
+	})
 )

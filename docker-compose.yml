@@ -53,6 +53,20 @@ services:
   #     start_period: 5s
   #   restart: unless-stopped
 
+  noisereduce:
+    build:
+      context: ./services/noisereduce
+      dockerfile: Dockerfile
+    ports:
+      - "5200:5200"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5200/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
   # --- commented out services ---
 
   piper:

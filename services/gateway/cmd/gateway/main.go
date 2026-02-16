@@ -100,6 +100,7 @@ func main() {
 	elevenlabsModelID := env.Str("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")
 	openaiAPIKey := env.Str("OPENAI_API_KEY", "")
 	anthropicAPIKey := env.Str("ANTHROPIC_API_KEY", "")
+	noisereduceURL := env.Str("NOISEREDUCE_URL", "")
 
 	// Service orchestrator
 	svcRegistry := orchestrator.NewRegistry(map[string]orchestrator.ServiceMeta{
@@ -111,7 +112,8 @@ func main() {
 	})
 	svcMgr := orchestrator.NewHTTPControlManager(svcRegistry)
 
-	asrRouter := initASR(whisperServerURL, t.ASRPoolSize)
+	whisperPrompt := env.Str("WHISPER_PROMPT", "Customer service call transcript:")
+	asrRouter := initASR(whisperServerURL, t.ASRPoolSize, whisperPrompt)
 	llmRouter := initLLM(ollamaURL, ollamaModel, openaiAPIKey, anthropicAPIKey, t)
 	ttsClient := initTTS(piperURL, kokoroURL, melottsURL, elevenlabsAPIKey, elevenlabsVoiceID, elevenlabsModelID, t.TTSPoolSize)
 
@@ -122,6 +124,11 @@ func main() {
 	vad := audio.DefaultVADConfig()
 	vad.SpeechThresholdDB = t.VADSpeechThreshold
 
+	var noiseClient *pipeline.NoiseClient
+	if noisereduceURL != "" {
+		noiseClient = pipeline.NewNoiseClient(noisereduceURL)
+	}
+
 	handler := ws.NewHandler(ws.HandlerConfig{
 		ASRClient:     asrRouter,
 		LLMClient:     llmRouter,
@@ -130,6 +137,7 @@ func main() {
 		MaxConcurrent: t.MaxConcurrentCalls,
 		RAGClient:     ragClient,
 		CallHistory:   callHistory,
+		NoiseClient:   noiseClient,
 	})
 
 	gpu := newGPUHub(ollamaURL, whisperControlURL)
@@ -217,10 +225,10 @@ func initRAG(ollamaURL, qdrantURL string, t tuning) (*pipeline.RAGClient, *pipel
 	return ragClient, callHistory
 }
 
-func initASR(whisperServerURL string, poolSize int) *pipeline.ASRRouter {
+func initASR(whisperServerURL string, poolSize int, prompt string) *pipeline.ASRRouter {
 	backends := map[string]pipeline.ASRTranscriber{}
 	if whisperServerURL != "" {
-		backends["whisper-server"] = pipeline.NewASRClient(whisperServerURL, poolSize)
+		backends["whisper-server"] = pipeline.NewASRClient(whisperServerURL, poolSize, prompt)
 	}
 	return pipeline.NewASRRouter(backends, "whisper-server")
 }

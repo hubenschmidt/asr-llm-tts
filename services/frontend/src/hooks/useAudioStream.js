@@ -43,6 +43,10 @@ export const useAudioStream = (opts) => {
         system_prompt: opts.systemPrompt(),
         llm_model: opts.llmModel(),
         llm_engine: opts.llmEngine(),
+        noise_suppression: opts.noiseSuppression?.() || false,
+        asr_prompt: opts.asrPrompt?.() || "",
+        confidence_threshold: opts.confidenceThreshold?.() ?? 0.6,
+        reference_transcript: opts.referenceTranscript?.() || "",
       };
       if (mode) meta.mode = mode;
       socket.send(JSON.stringify(meta));

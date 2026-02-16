@@ -1,4 +1,4 @@
-import { createSignal, onMount } from "solid-js";
+import { createSignal, onMount, Show } from "solid-js";
 
 import {
   fetchModels as apiFetchModels,
@@ -19,6 +19,7 @@ import { useAudioStream } from "../hooks/useAudioStream";
 import { MetricsPanel } from "./MetricsPanel";
 import { ConfigSidebar } from "./ConfigSidebar";
 import { CenterPanel } from "./CenterPanel";
+import { Tooltip } from "./TranscriptWidgets";
 
 const PROMPT_PRESETS = {
   general: "You are a helpful call center agent. Keep responses concise and conversational.",
@@ -92,6 +93,16 @@ export const CallPanel = () => {
   const [explainText, setExplainText] = createSignal(null);
   const [leftCollapsed, setLeftCollapsed] = createSignal(false);
   const [rightCollapsed, setRightCollapsed] = createSignal(false);
+
+  // STT tuning signals (localStorage-persisted)
+  const [noiseSuppression, _setNoiseSuppression] = createSignal(localStorage.getItem("noiseSuppression") === "true");
+  const [asrPrompt, _setAsrPrompt] = createSignal(localStorage.getItem("asrPrompt") || "");
+  const [confidenceThreshold, _setConfidenceThreshold] = createSignal(parseFloat(localStorage.getItem("confidenceThreshold")) || 0.6);
+  const [referenceTranscript, _setReferenceTranscript] = createSignal(localStorage.getItem("referenceTranscript") || "");
+  const setNoiseSuppression = (v) => { _setNoiseSuppression(v); localStorage.setItem("noiseSuppression", v); };
+  const setAsrPrompt = (v) => { _setAsrPrompt(v); localStorage.setItem("asrPrompt", v); };
+  const setConfidenceThreshold = (v) => { _setConfidenceThreshold(v); localStorage.setItem("confidenceThreshold", v); };
+  const setReferenceTranscript = (v) => { _setReferenceTranscript(v); localStorage.setItem("referenceTranscript", v); };
 
   const setSttModel = (v) => { _setSttModel(v); localStorage.setItem("sttModel", v); };
 
@@ -254,6 +265,10 @@ export const CallPanel = () => {
     llmEngine,
     audioBandwidth,
     bandwidthModes,
+    noiseSuppression,
+    asrPrompt,
+    confidenceThreshold,
+    referenceTranscript,
     onTranscript: (text) =>
       setTranscripts((prev) => [...prev, { role: "user", text }]),
     onLLMToken: (token) => setLlmResponse((prev) => prev + token),
@@ -497,6 +512,53 @@ export const CallPanel = () => {
             placeholder="System prompt..."
           />
         </div>
+        <Show when={sttEngine()}>
+          <div class="model-group" style={{ "margin-top": "12px" }}>
+            <label class="label">STT Tuning</label>
+            <div class="tuning-section">
+              <label class="tuning-row">
+                <input
+                  type="checkbox"
+                  checked={noiseSuppression()}
+                  onChange={(e) => setNoiseSuppression(e.target.checked)}
+                  disabled={isStreaming()}
+                />
+                <span>Noise suppression</span>
+                <Tooltip text="Send audio through a noise-reduction model before ASR. Helps in noisy environments but adds latency." />
+              </label>
+              <label class="tuning-label">ASR prompt <Tooltip text="Hint text passed to the ASR model to improve recognition of domain-specific terms, names, or acronyms." /></label>
+              <input
+                type="text"
+                class="tuning-input"
+                value={asrPrompt()}
+                onInput={(e) => setAsrPrompt(e.target.value)}
+                disabled={isStreaming()}
+                placeholder="e.g. technical terms…"
+              />
+              <label class="tuning-label">
+                Confidence threshold: {confidenceThreshold().toFixed(2)}
+                <Tooltip text="Reject ASR results where the model's no-speech probability exceeds this value. Lower = stricter filtering of noise/hallucinations." />
+              </label>
+              <input
+                type="range"
+                class="tuning-range"
+                min="0" max="1" step="0.05"
+                value={confidenceThreshold()}
+                onInput={(e) => setConfidenceThreshold(parseFloat(e.target.value))}
+                disabled={isStreaming()}
+              />
+              <label class="tuning-label">Reference transcript (WER) <Tooltip text="Ground-truth text to compare against ASR output. Computes Word Error Rate for accuracy evaluation." /></label>
+              <input
+                type="text"
+                class="tuning-input"
+                value={referenceTranscript()}
+                onInput={(e) => setReferenceTranscript(e.target.value)}
+                disabled={isStreaming()}
+                placeholder="Ground truth for WER eval…"
+              />
+            </div>
+          </div>
+        </Show>
       </div>
     </div>
   );
