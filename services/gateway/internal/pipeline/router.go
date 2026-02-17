@@ -2,8 +2,11 @@ package pipeline
 
 import "fmt"
 
-// Router is a generic backend dispatcher that maps engine names to backend implementations.
-// It provides O(1) lookup by name with a configurable fallback default.
+// Router is a generic backend dispatcher that maps engine names to backend
+// implementations. Both ASRRouter and TTSRouter are aliases for Router[T]
+// with T = ASRTranscriber and T = TTSSynthesizer respectively.
+// Using a generic avoids duplicating the same map-lookup + fallback logic
+// for every backend type. Provides O(1) lookup with configurable fallback.
 type Router[T any] struct {
 	backends map[string]T
 	fallback string

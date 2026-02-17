@@ -13,29 +13,31 @@ func ComputeWER(reference, hypothesis string) float64 {
 		return 0
 	}
 
-	// Levenshtein DP at word level — two-row optimization
-	prev := make([]int, len(hyp)+1)
-	curr := make([]int, len(hyp)+1)
-	for j := range prev {
-		prev[j] = j
+	// Levenshtein DP at word level — two-row optimization.
+	// previousRow[j] = edit distance between ref[:i-1] and hyp[:j].
+	// currentRow[j]  = edit distance between ref[:i]   and hyp[:j].
+	previousRow := make([]int, len(hyp)+1)
+	currentRow := make([]int, len(hyp)+1)
+	for j := range previousRow {
+		previousRow[j] = j
 	}
 
 	for i := 1; i <= len(ref); i++ {
-		curr[0] = i
+		currentRow[0] = i
 		for j := 1; j <= len(hyp); j++ {
 			cost := 1
 			if ref[i-1] == hyp[j-1] {
 				cost = 0
 			}
-			del := prev[j] + 1
-			ins := curr[j-1] + 1
-			sub := prev[j-1] + cost
-			curr[j] = min3(del, ins, sub)
+			deletionCost := previousRow[j] + 1
+			insertionCost := currentRow[j-1] + 1
+			substitutionCost := previousRow[j-1] + cost
+			currentRow[j] = min3(deletionCost, insertionCost, substitutionCost)
 		}
-		prev, curr = curr, prev
+		previousRow, currentRow = currentRow, previousRow
 	}
 
-	return float64(prev[len(hyp)]) / float64(len(ref))
+	return float64(previousRow[len(hyp)]) / float64(len(ref))
 }
 
 func min3(a, b, c int) int {

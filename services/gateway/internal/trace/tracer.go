@@ -7,7 +7,15 @@ import (
 	"github.com/google/uuid"
 )
 
-const maxIOLen = 500
+const (
+	// maxTraceFieldLen caps the length of transcript/response/input/output strings
+	// stored in trace spans to avoid bloating the SQLite database.
+	maxTraceFieldLen = 500
+
+	// traceChannelBuffer is how many trace messages can queue before the
+	// background drain goroutine writes them to the store.
+	traceChannelBuffer = 64
+)
 
 type traceMsg struct {
 	kind string // "run_create", "run_update", "span"
@@ -31,12 +39,15 @@ type Tracer struct {
 	done      chan struct{}
 }
 
-// NewTracer creates a tracer bound to a session. Must call Close when done.
+// NewTracer creates a tracer bound to a session.
+// Launches a background goroutine (drain) that writes trace messages to the
+// store sequentially. Callers MUST call Close() when done to flush pending
+// writes and stop the goroutine — otherwise writes are lost and goroutine leaks.
 func NewTracer(store *Store, sessionID string) *Tracer {
 	t := &Tracer{
 		store:     store,
 		sessionID: sessionID,
-		ch:        make(chan traceMsg, 64),
+		ch:        make(chan traceMsg, traceChannelBuffer),
 		done:      make(chan struct{}),
 	}
 	go t.drain()
@@ -89,8 +100,8 @@ func (t *Tracer) EndRun(runID string, durationMs float64, transcript, response, 
 		kind:       "run_update",
 		runID:      runID,
 		durationMs: durationMs,
-		transcript: truncate(transcript, maxIOLen),
-		response:   truncate(response, maxIOLen),
+		transcript: truncate(transcript, maxTraceFieldLen),
+		response:   truncate(response, maxTraceFieldLen),
 		status:     status,
 	}
 }
@@ -108,8 +119,8 @@ func (t *Tracer) RecordSpan(runID, name string, startedAt time.Time, durationMs 
 			Name:       name,
 			StartedAt:  startedAt,
 			DurationMs: durationMs,
-			Input:      truncate(input, maxIOLen),
-			Output:     truncate(output, maxIOLen),
+			Input:      truncate(input, maxTraceFieldLen),
+			Output:     truncate(output, maxTraceFieldLen),
 			Status:     status,
 			Error:      errMsg,
 		},

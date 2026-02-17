@@ -71,7 +71,8 @@ func (a *AgentLLM) Has(engine string) bool {
 }
 
 // Chat streams a completion from the resolved provider.
-// Raw clients (registered via RegisterRaw) bypass the SDK entirely.
+// Lookup order: try raw HTTP clients first (completions-only models that
+// bypass the SDK), then fall back to SDK providers (openai-agents-go).
 func (a *AgentLLM) Chat(ctx context.Context, userMessage, systemPrompt, model, engine string, onToken TokenCallback) (*LLMResult, error) {
 	if raw, ok := a.rawClients[engine]; ok {
 		useModel := model

@@ -17,9 +17,23 @@ import (
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/trace"
 )
 
+const (
+	// wsBufferSize is the read/write buffer for WebSocket frames (16 KB).
+	wsBufferSize = 16384
+
+	// defaultSampleRate is the audio sample rate when the client omits it (16 kHz).
+	defaultSampleRate = 16000
+
+	// defaultConfidenceThreshold is the ASR no-speech-probability cutoff.
+	defaultConfidenceThreshold = 0.6
+
+	// defaultTTSSpeed is the playback speed multiplier when the client omits it.
+	defaultTTSSpeed = 1.0
+)
+
 var upgrader = websocket.Upgrader{
-	ReadBufferSize:  16384,
-	WriteBufferSize: 16384,
+	ReadBufferSize:  wsBufferSize,
+	WriteBufferSize: wsBufferSize,
 	CheckOrigin:     func(r *http.Request) bool { return true },
 }
 
@@ -116,15 +130,15 @@ func resolveParams(meta *callMetadata, baseCfg audio.VADConfig) sessionParams {
 
 	sampleRate := meta.SampleRate
 	if sampleRate <= 0 {
-		sampleRate = 16000
+		sampleRate = defaultSampleRate
 	}
 	confidenceThreshold := meta.ConfidenceThreshold
 	if confidenceThreshold <= 0 {
-		confidenceThreshold = 0.6
+		confidenceThreshold = defaultConfidenceThreshold
 	}
 	ttsSpeed := meta.TTSSpeed
 	if ttsSpeed <= 0 {
-		ttsSpeed = 1.0
+		ttsSpeed = defaultTTSSpeed
 	}
 	textNorm := true
 	if meta.TextNormalization != nil {
@@ -171,7 +185,7 @@ func (h *Handler) runSession(conn *websocket.Conn) {
 		return
 	}
 
-	sp := resolveParams(meta, h.cfg.VADConfig)
+	params := resolveParams(meta, h.cfg.VADConfig)
 	sessionID := uuid.NewString()
 
 	var denoiser *denoise.Denoiser
@@ -184,7 +198,7 @@ func (h *Handler) runSession(conn *websocket.Conn) {
 		classifyClient = nil
 	}
 
-	slog.Info("call started", "session_id", sessionID, "codec", sp.codec, "sample_rate", sp.sampleRate, "tts_engine", sp.ttsEngine, "asr_engine", sp.asrEngine, "llm_engine", sp.llmEngine, "mode", sp.mode, "noise_suppression", meta.NoiseSuppression, "confidence_threshold", sp.confidenceThreshold, "tts_speed", sp.ttsSpeed)
+	slog.Info("call started", "session_id", sessionID, "codec", params.codec, "sample_rate", params.sampleRate, "tts_engine", params.ttsEngine, "asr_engine", params.asrEngine, "llm_engine", params.llmEngine, "mode", params.mode, "noise_suppression", meta.NoiseSuppression, "confidence_threshold", params.confidenceThreshold, "tts_speed", params.ttsSpeed)
 
 	tracer := h.startTracer(sessionID, meta)
 	if tracer != nil {
@@ -195,40 +209,47 @@ func (h *Handler) runSession(conn *websocket.Conn) {
 	}
 
 	pipe := pipeline.New(pipeline.Config{
-		ASRClient:            h.cfg.ASRClient,
-		LLMClient:            h.cfg.LLMClient,
-		TTSClient:            h.cfg.TTSClient,
-		VADConfig:            sp.vadCfg,
-		Denoiser:             denoiser,
-		NoiseSuppression:     meta.NoiseSuppression,
-		SessionID:            sessionID,
-		SystemPrompt:         sp.systemPrompt,
-		LLMModel:             meta.LLMModel,
-		LLMEngine:            sp.llmEngine,
-		ASRPrompt:            meta.ASRPrompt,
-		ConfidenceThreshold:  sp.confidenceThreshold,
-		ReferenceTranscript:  meta.ReferenceTranscript,
-		TTSSpeed:             sp.ttsSpeed,
+		// Backend clients
+		ASRClient:   h.cfg.ASRClient,
+		LLMClient:   h.cfg.LLMClient,
+		TTSClient:   h.cfg.TTSClient,
+		// Audio & VAD
+		VADConfig:        params.vadCfg,
+		Denoiser:         denoiser,
+		NoiseSuppression: meta.NoiseSuppression,
+		// Session identity
+		SessionID:    sessionID,
+		SystemPrompt: params.systemPrompt,
+		// LLM settings
+		LLMModel:  meta.LLMModel,
+		LLMEngine: params.llmEngine,
+		// ASR settings
+		ASRPrompt:           meta.ASRPrompt,
+		ConfidenceThreshold: params.confidenceThreshold,
+		ReferenceTranscript: meta.ReferenceTranscript,
+		// TTS settings
+		TTSSpeed:             params.ttsSpeed,
 		TTSPitch:             meta.TTSPitch,
-		TextNormalization:    sp.textNorm,
+		TextNormalization:    params.textNorm,
 		InterSentencePauseMs: meta.InterSentencePauseMs,
-		ClassifyClient:       classifyClient,
-		AudioClassification:  meta.AudioClassification,
-		Tracer:               tracer,
+		// Classification & tracing
+		ClassifyClient:      classifyClient,
+		AudioClassification: meta.AudioClassification,
+		Tracer:              tracer,
 	})
 
 	sendEvent := newEventSender(conn)
-	sc := &sessionCtx{
+	sess := &sessionCtx{
 		pipe:       pipe,
-		codec:      sp.codec,
-		sampleRate: sp.sampleRate,
-		ttsEngine:  sp.ttsEngine,
-		asrEngine:  sp.asrEngine,
-		mode:       sp.mode,
+		codec:      params.codec,
+		sampleRate: params.sampleRate,
+		ttsEngine:  params.ttsEngine,
+		asrEngine:  params.asrEngine,
+		mode:       params.mode,
 		sendEvent:  sendEvent,
 	}
-	processMessages(ctx, conn, sc)
-	flushIfNeeded(ctx, sc)
+	processMessages(ctx, conn, sess)
+	flushIfNeeded(ctx, sess)
 
 	slog.Info("call ended")
 }

@@ -14,6 +14,24 @@ import (
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/trace"
 )
 
+const (
+	// emotionClassifyTimeout caps how long the fire-and-forget emotion
+	// classification goroutine waits before giving up.
+	emotionClassifyTimeout = 5 * time.Second
+
+	// defaultConfidenceThreshold is the no-speech probability above which
+	// an ASR result is discarded as noise.
+	defaultConfidenceThreshold = 0.6
+
+	// sentenceChannelBuffer is how many complete sentences can queue between
+	// the LLM producer and the TTS consumer before back-pressure kicks in.
+	sentenceChannelBuffer = 4
+
+	// ttsSilenceSampleRate is the sample rate used when generating
+	// inter-sentence silence WAV chunks.
+	ttsSilenceSampleRate = 24000
+)
+
 // silenceWAV generates a minimal WAV file of silence for the given duration and sample rate.
 func silenceWAV(ms, sampleRate int) []byte {
 	numSamples := sampleRate * ms / 1000
@@ -205,7 +223,7 @@ func (p *Pipeline) runFullPipeline(ctx context.Context, speechAudio []float32, t
 	if p.cfg.AudioClassification && p.cfg.ClassifyClient != nil {
 		audioSnap := make([]float32, len(speechAudio))
 		copy(audioSnap, speechAudio)
-		emotionCtx, emotionCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		emotionCtx, emotionCancel := context.WithTimeout(context.Background(), emotionClassifyTimeout)
 		go func() { defer emotionCancel(); p.classifyEmotion(emotionCtx, audioSnap, onEvent, runID) }()
 	}
 
@@ -268,7 +286,7 @@ func (p *Pipeline) runASR(ctx context.Context, speechAudio []float32, asrEngine,
 	transcript := strings.TrimSpace(asrResult.Text)
 	threshold := p.cfg.ConfidenceThreshold
 	if threshold == 0 {
-		threshold = 0.6
+		threshold = defaultConfidenceThreshold
 	}
 	if transcript == "" || asrResult.NoSpeechProb > threshold || isNoiseTranscript(transcript) {
 		return "", asrResult, nil
@@ -376,7 +394,7 @@ func (p *Pipeline) classifyEmotion(ctx context.Context, samples []float32, onEve
 // A goroutine (consumer) reads sentences and synthesizes audio via TTS in parallel,
 // so the first TTS audio is ready before the LLM finishes generating.
 func (p *Pipeline) streamLLMWithTTS(ctx context.Context, transcript, ttsEngine string, onEvent EventCallback, runID string) (float64, *LLMResult, error) {
-	sentenceCh := make(chan string, 4)
+	sentenceCh := make(chan string, sentenceChannelBuffer)
 	var ttsWg sync.WaitGroup
 	var totalTTSMs float64
 	var ttsMu sync.Mutex
@@ -390,24 +408,24 @@ func (p *Pipeline) streamLLMWithTTS(ctx context.Context, transcript, ttsEngine s
 
 	// LLM producer — stream content tokens, split at sentence boundaries.
 	// Code blocks (``` fenced) are sent to the frontend but omitted from TTS.
-	var sb sentenceBuffer
-	var cf codeFilter
+	var sentenceBuf sentenceBuffer
+	var codeFilt codeFilter
 
 	llmStart := time.Now()
 	llmResult, err := p.cfg.LLMClient.Chat(ctx, transcript, p.cfg.SystemPrompt, p.cfg.LLMModel, p.cfg.LLMEngine, func(token string) {
 		onEvent(Event{Type: "llm_token", Token: token})
-		filtered := cf.Filter(token)
+		filtered := codeFilt.Filter(token)
 		if filtered == "" {
 			return
 		}
-		s := sb.Add(filtered)
+		s := sentenceBuf.Add(filtered)
 		if s != "" {
 			sentenceCh <- s
 		}
 	})
 
 	// Flush remaining text from sentence buffer
-	remainder := sb.Flush()
+	remainder := sentenceBuf.Flush()
 	if remainder != "" {
 		sentenceCh <- remainder
 	}
@@ -474,7 +492,7 @@ func (p *Pipeline) synthesizeSentence(ctx context.Context, sentence, ttsEngine s
 	onEvent(Event{Type: "tts_ready", Audio: ttsResult.Audio, LatencyMs: ttsResult.LatencyMs})
 
 	if p.cfg.InterSentencePauseMs > 0 {
-		onEvent(Event{Type: "tts_ready", Audio: silenceWAV(p.cfg.InterSentencePauseMs, 24000)})
+		onEvent(Event{Type: "tts_ready", Audio: silenceWAV(p.cfg.InterSentencePauseMs, ttsSilenceSampleRate)})
 	}
 	return nil
 }

@@ -20,6 +20,9 @@ type ClassifyResult struct {
 	LatencyMs  float64            `json:"latency_ms"`
 }
 
+// classifyTimeout is how long we wait for the audioclassify sidecar to respond.
+const classifyTimeout = 5 * time.Second
+
 // ClassifyClient calls the audioclassify sidecar for scene and emotion classification.
 type ClassifyClient struct {
 	url    string
@@ -30,7 +33,7 @@ type ClassifyClient struct {
 func NewClassifyClient(url string) *ClassifyClient {
 	return &ClassifyClient{
 		url:    url,
-		client: &http.Client{Timeout: 5 * time.Second},
+		client: &http.Client{Timeout: classifyTimeout},
 	}
 }
 
@@ -40,9 +43,10 @@ func (c *ClassifyClient) ClassifyEmotion(ctx context.Context, samples []float32)
 }
 
 func (c *ClassifyClient) post(ctx context.Context, path string, samples []float32) (*ClassifyResult, error) {
-	buf := make([]byte, len(samples)*4)
+	const bytesPerFloat32 = 4
+	buf := make([]byte, len(samples)*bytesPerFloat32)
 	for i, s := range samples {
-		binary.LittleEndian.PutUint32(buf[i*4:], math.Float32bits(s))
+		binary.LittleEndian.PutUint32(buf[i*bytesPerFloat32:], math.Float32bits(s))
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", c.url+path, bytes.NewReader(buf))

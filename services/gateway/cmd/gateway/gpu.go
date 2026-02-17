@@ -13,6 +13,9 @@ import (
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/models"
 )
 
+// gpuFetchTimeout is how long we wait for the GPU control sidecar to respond.
+const gpuFetchTimeout = 5 * time.Second
+
 type gpuHub struct {
 	mu         sync.Mutex
 	subs       map[chan []byte]struct{}
@@ -92,14 +95,15 @@ func (h *gpuHub) fetch() []byte {
 	if h.controlURL == "" {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), gpuFetchTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, "GET", h.controlURL+"/gpu", nil)
 	if err != nil {
 		slog.Error("gpu fetch failed", "error", err)
 		return nil
 	}
-	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	client := &http.Client{Timeout: gpuFetchTimeout}
+	resp, err := client.Do(req)
 	if err != nil {
 		slog.Error("gpu fetch failed", "error", err)
 		return nil
@@ -109,6 +113,11 @@ func (h *gpuHub) fetch() []byte {
 	return h.enrich(body)
 }
 
+// broadcast sends GPU data to all SSE subscribers.
+// The select/default pattern is a non-blocking send: if a subscriber's
+// channel buffer is full (slow consumer), the update is dropped rather
+// than blocking the broadcaster. Each channel has capacity 1, so the
+// subscriber always gets the most recent state on next read.
 func (h *gpuHub) broadcast(data []byte) {
 	if data == nil {
 		return

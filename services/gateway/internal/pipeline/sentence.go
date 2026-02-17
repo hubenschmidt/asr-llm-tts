@@ -85,7 +85,12 @@ func isEmDash(text string, i int) bool {
 	return i+2 < len(text) && text[i] == 0xE2 && text[i+1] == 0x80 && text[i+2] == 0x94
 }
 
-// findLongCommaClause returns the index of the last comma where the preceding text has >15 words.
+// minWordsForCommaBreak is the minimum word count before a comma is treated as
+// a clause boundary for TTS. Short clauses sound unnatural when split.
+const minWordsForCommaBreak = 15
+
+// findLongCommaClause returns the index of the last comma where the preceding
+// text has more than minWordsForCommaBreak words.
 func findLongCommaClause(text string) int {
 	lastIdx := -1
 	words := 0
@@ -93,7 +98,7 @@ func findLongCommaClause(text string) int {
 		if text[i] == ' ' {
 			words++
 		}
-		if text[i] == ',' && words > 15 {
+		if text[i] == ',' && words > minWordsForCommaBreak {
 			lastIdx = i
 		}
 	}
@@ -240,6 +245,10 @@ func parseInt(s string) (int, error) {
 	return strconv.Atoi(s)
 }
 
+// codeFenceBackticks is the number of consecutive backticks that open/close
+// a markdown fenced code block (```).
+const codeFenceBackticks = 3
+
 // codeFilter strips markdown code fences (```) from a token stream.
 // Text inside fences is omitted; text outside is returned verbatim.
 type codeFilter struct {
@@ -259,7 +268,7 @@ func (f *codeFilter) Filter(token string) string {
 func (f *codeFilter) filterChar(ch byte, out *strings.Builder) {
 	if ch == '`' {
 		f.pending++
-		if f.pending == 3 {
+		if f.pending == codeFenceBackticks {
 			f.inBlock = !f.inBlock
 			f.pending = 0
 		}

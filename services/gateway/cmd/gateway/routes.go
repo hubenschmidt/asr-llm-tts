@@ -16,6 +16,16 @@ import (
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/trace"
 )
 
+const (
+	// proxyTimeout is the HTTP client timeout for proxied requests to
+	// backend sidecars (whisper-control model list, model download).
+	proxyTimeout = 30 * time.Second
+
+	// defaultTraceSessionLimit is how many trace sessions are returned
+	// when the caller omits the ?limit= query parameter.
+	defaultTraceSessionLimit = 20
+)
+
 type deps struct {
 	ollamaURL         string
 	ollamaModel       string
@@ -34,9 +44,9 @@ func registerRoutes(mux *http.ServeMux, d deps) {
 	mux.Handle("/ws/call", d.wsHandler)
 	mux.HandleFunc("/health", handleHealth)
 	mux.HandleFunc("/api/models", d.handleModels)
-	mux.HandleFunc("/api/models/preload", d.handlePreload)
-	mux.HandleFunc("/api/models/unload", d.handleUnload)
-	mux.HandleFunc("/api/tts/warmup", d.handleTTSWarmup)
+	mux.HandleFunc("POST /api/models/preload", d.handlePreload)
+	mux.HandleFunc("POST /api/models/unload", d.handleUnload)
+	mux.HandleFunc("POST /api/tts/warmup", d.handleTTSWarmup)
 	mux.HandleFunc("/api/tts/health", d.handleTTSHealth)
 	mux.HandleFunc("POST /api/gpu/unload-all", d.handleGPUUnloadAll)
 	mux.HandleFunc("GET /api/gpu", d.handleGPU)
@@ -92,10 +102,6 @@ func (d deps) handleModels(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d deps) handlePreload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	var req struct {
 		Model string `json:"model"`
 	}
@@ -116,10 +122,6 @@ func (d deps) handlePreload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d deps) handleUnload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	var req struct {
 		Type  string `json:"type"`
 		Model string `json:"model"`
@@ -138,10 +140,6 @@ func (d deps) handleUnload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d deps) handleTTSWarmup(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	var req struct {
 		Engine string `json:"engine"`
 	}
@@ -244,7 +242,7 @@ func (d deps) handleASRModels(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: proxyTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
@@ -266,7 +264,8 @@ func (d deps) handleASRDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	client := &http.Client{Timeout: proxyTimeout}
+	resp, err := client.Do(req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -392,7 +391,7 @@ func registerTraceRoutes(mux *http.ServeMux, store *trace.Store) {
 			http.Error(w, "tracing disabled", http.StatusNotFound)
 			return
 		}
-		limit := queryInt(r, "limit", 20)
+		limit := queryInt(r, "limit", defaultTraceSessionLimit)
 		offset := queryInt(r, "offset", 0)
 		sessions, total, err := store.ListSessions(limit, offset)
 		if err != nil {
