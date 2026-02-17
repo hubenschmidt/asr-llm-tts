@@ -39,14 +39,5 @@ func ComputeWER(reference, hypothesis string) float64 {
 }
 
 func min3(a, b, c int) int {
-	if a < b {
-		if a < c {
-			return a
-		}
-		return c
-	}
-	if b < c {
-		return b
-	}
-	return c
+	return min(a, min(b, c))
 }

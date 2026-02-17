@@ -54,21 +54,21 @@ func (r *ASRRouter) Transcribe(ctx context.Context, samples []float32, engine st
 // Different backends only vary by endpoint path (e.g. /inference for whisper.cpp,
 // /transcribe for ROCm whisper). The label field is used in error messages and logs.
 type MultipartASRClient struct {
-	url      string
-	endpoint string
-	label    string
-	prompt   string
-	client   *http.Client
+	url           string
+	endpoint      string
+	label         string
+	defaultPrompt string // fallback prompt when ASROptions.Prompt is empty
+	client        *http.Client
 }
 
 // NewASRClient creates a client for whisper.cpp (/inference endpoint).
 func NewASRClient(url string, poolSize int, prompt string) *MultipartASRClient {
 	return &MultipartASRClient{
-		url:      url,
-		endpoint: "/inference",
-		label:    "whisper",
-		prompt:   prompt,
-		client:   NewPooledHTTPClient(poolSize, 30*time.Second),
+		url:           url,
+		endpoint:      "/inference",
+		label:         "whisper",
+		defaultPrompt: prompt,
+		client:        NewPooledHTTPClient(poolSize, 30*time.Second),
 	}
 }
 
@@ -76,7 +76,7 @@ func NewASRClient(url string, poolSize int, prompt string) *MultipartASRClient {
 func (c *MultipartASRClient) Transcribe(ctx context.Context, samples []float32, opts ASROptions) (*ASRResult, error) {
 	start := time.Now()
 
-	prompt := c.prompt
+	prompt := c.defaultPrompt
 	if opts.Prompt != "" {
 		prompt = opts.Prompt
 	}

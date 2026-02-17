@@ -75,6 +75,7 @@ flowchart TB
 The LLM and TTS stages are **not** fully sequential. The gateway uses sentence pipelining: TTS begins synthesizing the first complete sentence while the LLM continues generating.
 
 ```mermaid
+%%{init: {'themeVariables': {'signalTextColor': '#000000'}} }%%
 sequenceDiagram
     box rgb(245, 158, 11) ASR
         participant ASR

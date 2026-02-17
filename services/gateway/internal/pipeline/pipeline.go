@@ -111,8 +111,10 @@ func (p *Pipeline) ProcessChunk(ctx context.Context, data []byte, codec audio.Co
 		return fmt.Errorf("decode: %w", err)
 	}
 
-	resampled := audio.Resample(samples, srcRate, 16000) // needs to be resampled at 16 kHz for Whisper model consumption
+	resampled := audio.Resample(samples, srcRate, 16000)
 
+	// RNNoise expects 48 kHz internally and resamples from 16 kHz+.
+	// G.711 input arrives at 8 kHz — too low for RNNoise, so skip denoising.
 	if p.cfg.Denoiser != nil && srcRate >= 16000 {
 		resampled = p.cfg.Denoiser.Denoise(resampled)
 	}
@@ -254,13 +256,11 @@ func (p *Pipeline) runFullPipeline(ctx context.Context, speechAudio []float32, t
 func (p *Pipeline) runASR(ctx context.Context, speechAudio []float32, asrEngine, runID string) (string, *ASRResult, error) {
 	asrStart := time.Now()
 	asrResult, err := p.cfg.ASRClient.Transcribe(ctx, speechAudio, asrEngine, ASROptions{Prompt: p.cfg.ASRPrompt})
-	if p.cfg.Tracer != nil {
-		status, errMsg := "ok", ""
-		if err != nil {
-			status, errMsg = "error", err.Error()
-		}
-		p.cfg.Tracer.RecordSpan(runID, "asr", asrStart, asrResult.LatencyMs, fmt.Sprintf("audio_samples=%d", len(speechAudio)), asrResult.Text, status, errMsg)
+	asrOutput := ""
+	if asrResult != nil {
+		asrOutput = asrResult.Text
 	}
+	p.traceSpan(runID, "asr", asrStart, fmt.Sprintf("audio_samples=%d", len(speechAudio)), asrOutput, err)
 	if err != nil {
 		return "", nil, err
 	}
@@ -292,6 +292,18 @@ func (p *Pipeline) evaluateWER(transcript string, asrResult *ASRResult) float64 
 		"noise_suppression", p.cfg.NoiseSuppression,
 	)
 	return wer
+}
+
+// traceSpan records a completed span if tracing is enabled.
+func (p *Pipeline) traceSpan(runID, name string, start time.Time, input, output string, err error) {
+	if p.cfg.Tracer == nil || runID == "" {
+		return
+	}
+	status, errMsg := "ok", ""
+	if err != nil {
+		status, errMsg = "error", err.Error()
+	}
+	p.cfg.Tracer.RecordSpan(runID, name, start, float64(time.Since(start).Milliseconds()), input, output, status, errMsg)
 }
 
 func (p *Pipeline) endRun(runID string, start time.Time, transcript, response, status string) {
@@ -346,16 +358,11 @@ func (p *Pipeline) formatInput(current string) string {
 func (p *Pipeline) classifyEmotion(ctx context.Context, samples []float32, onEvent EventCallback, runID string) {
 	start := time.Now()
 	result, err := p.cfg.ClassifyClient.ClassifyEmotion(ctx, samples)
-	if p.cfg.Tracer != nil && runID != "" {
-		status, errMsg, out := "ok", "", ""
-		if err != nil {
-			status, errMsg = "error", err.Error()
-		}
-		if result != nil {
-			out = fmt.Sprintf("label=%s conf=%.2f", result.Label, result.Confidence)
-		}
-		p.cfg.Tracer.RecordSpan(runID, "emotion_classify", start, float64(time.Since(start).Milliseconds()), fmt.Sprintf("samples=%d", len(samples)), out, status, errMsg)
+	out := ""
+	if result != nil {
+		out = fmt.Sprintf("label=%s conf=%.2f", result.Label, result.Confidence)
 	}
+	p.traceSpan(runID, "emotion_classify", start, fmt.Sprintf("samples=%d", len(samples)), out, err)
 	if err != nil {
 		slog.Warn("emotion classification failed", "error", err)
 		return
@@ -407,17 +414,11 @@ func (p *Pipeline) streamLLMWithTTS(ctx context.Context, transcript, ttsEngine s
 	close(sentenceCh)
 	ttsWg.Wait()
 
-	if p.cfg.Tracer != nil {
-		status, errMsg := "ok", ""
-		outText := ""
-		if err != nil {
-			status, errMsg = "error", err.Error()
-		}
-		if llmResult != nil {
-			outText = llmResult.Text
-		}
-		p.cfg.Tracer.RecordSpan(runID, "llm", llmStart, float64(time.Since(llmStart).Milliseconds()), transcript, outText, status, errMsg)
+	llmOutput := ""
+	if llmResult != nil {
+		llmOutput = llmResult.Text
 	}
+	p.traceSpan(runID, "llm", llmStart, transcript, llmOutput, err)
 
 	if err != nil {
 		return 0, nil, err
@@ -456,16 +457,11 @@ func (p *Pipeline) synthesizeSentence(ctx context.Context, sentence, ttsEngine s
 
 	ttsStart := time.Now()
 	ttsResult, err := p.cfg.TTSClient.Synthesize(ctx, sentence, ttsEngine, ttsOpts)
-	if p.cfg.Tracer != nil {
-		status, errMsg, out := "ok", "", ""
-		if err != nil {
-			status, errMsg = "error", err.Error()
-		}
-		if ttsResult != nil {
-			out = fmt.Sprintf("audio_bytes=%d", len(ttsResult.Audio))
-		}
-		p.cfg.Tracer.RecordSpan(runID, "tts", ttsStart, float64(time.Since(ttsStart).Milliseconds()), sentence, out, status, errMsg)
+	ttsOutput := ""
+	if ttsResult != nil {
+		ttsOutput = fmt.Sprintf("audio_bytes=%d", len(ttsResult.Audio))
 	}
+	p.traceSpan(runID, "tts", ttsStart, sentence, ttsOutput, err)
 	if err != nil {
 		slog.Error("tts sentence", "error", err, "text", sentence)
 		onEvent(Event{Type: "error", Text: err.Error()})

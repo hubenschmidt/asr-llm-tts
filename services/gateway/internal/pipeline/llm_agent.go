@@ -3,12 +3,12 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/nlpodyssey/openai-agents-go/agents"
 	"github.com/nlpodyssey/openai-agents-go/modelsettings"
 	"github.com/openai/openai-go/v2/packages/param"
-
 )
 
 // AgentLLM routes LLM requests to the correct provider using the openai-agents-go SDK.
@@ -53,10 +53,9 @@ func (a *AgentLLM) Engines() []string {
 		names = append(names, k)
 	}
 	for k := range a.rawClients {
-		if seen[k] {
-			continue
+		if !seen[k] {
+			names = append(names, k)
 		}
-		names = append(names, k)
 	}
 	return names
 }
@@ -107,22 +106,10 @@ func (a *AgentLLM) Chat(ctx context.Context, userMessage, systemPrompt, model, e
 		return nil, fmt.Errorf("llm stream start: %w", err)
 	}
 
+	var textBuf strings.Builder
 	var sr streamResult
 	for ev := range events {
-		raw, ok := ev.(agents.RawResponsesStreamEvent)
-		if !ok {
-			continue
-		}
-		if raw.Data.Type != "response.output_text.delta" {
-			continue
-		}
-		if sr.ttft.IsZero() {
-			sr.ttft = time.Now()
-		}
-		if onToken != nil {
-			onToken(raw.Data.Delta)
-		}
-		sr.text += raw.Data.Delta
+		handleStreamEvent(ev, &sr, onToken, &textBuf)
 	}
 
 	if streamErr := <-errCh; streamErr != nil {
@@ -137,10 +124,27 @@ func (a *AgentLLM) Chat(ctx context.Context, userMessage, systemPrompt, model, e
 	}
 
 	return &LLMResult{
-		Text:               sr.text,
+		Text:               textBuf.String(),
 		LatencyMs:          float64(latency.Milliseconds()),
 		TimeToFirstTokenMs: ttft,
 	}, nil
+}
+
+func handleStreamEvent(ev agents.StreamEvent, sr *streamResult, onToken TokenCallback, textBuf *strings.Builder) {
+	raw, ok := ev.(agents.RawResponsesStreamEvent)
+	if !ok {
+		return
+	}
+	if raw.Data.Type != "response.output_text.delta" {
+		return
+	}
+	if sr.ttft.IsZero() {
+		sr.ttft = time.Now()
+	}
+	if onToken != nil {
+		onToken(raw.Data.Delta)
+	}
+	textBuf.WriteString(raw.Data.Delta)
 }
 
 func (a *AgentLLM) resolve(engine, model string) (agents.ModelProvider, string, error) {

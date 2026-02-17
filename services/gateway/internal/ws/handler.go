@@ -218,8 +218,17 @@ func (h *Handler) runSession(conn *websocket.Conn) {
 	})
 
 	sendEvent := newEventSender(conn)
-	processMessages(ctx, conn, pipe, sp.codec, sp.sampleRate, sp.ttsEngine, sp.asrEngine, sendEvent, sp.mode)
-	flushIfNeeded(ctx, sp.mode, pipe, sp.ttsEngine, sp.asrEngine, sendEvent)
+	sc := &sessionCtx{
+		pipe:       pipe,
+		codec:      sp.codec,
+		sampleRate: sp.sampleRate,
+		ttsEngine:  sp.ttsEngine,
+		asrEngine:  sp.asrEngine,
+		mode:       sp.mode,
+		sendEvent:  sendEvent,
+	}
+	processMessages(ctx, conn, sc)
+	flushIfNeeded(ctx, sc)
 
 	slog.Info("call ended")
 }
@@ -233,72 +242,83 @@ func (h *Handler) startTracer(sessionID string, meta *callMetadata) *trace.Trace
 	return trace.NewTracer(h.cfg.TraceStore, sessionID)
 }
 
+// sessionCtx bundles the per-session state threaded through message handling.
+type sessionCtx struct {
+	pipe       *pipeline.Pipeline
+	codec      audio.Codec
+	sampleRate int
+	ttsEngine  string
+	asrEngine  string
+	mode       string
+	sendEvent  pipeline.EventCallback
+}
+
 // processMessages reads frames from the WebSocket in a loop.
 // Text frames carry actions (chat, process) and are handled in all modes.
 // Binary frames are mode-specific: talk=VAD, snippet=buffer, text=ignored.
-func processMessages(ctx context.Context, conn *websocket.Conn, pipe *pipeline.Pipeline, codec audio.Codec, sampleRate int, ttsEngine, asrEngine string, sendEvent pipeline.EventCallback, mode string) {
+func processMessages(ctx context.Context, conn *websocket.Conn, sc *sessionCtx) {
 	for {
 		msgType, data, err := conn.ReadMessage()
 		if err != nil {
 			slog.Info("connection closed", "error", err)
 			return
 		}
-		handleOneMessage(ctx, msgType, data, pipe, codec, sampleRate, ttsEngine, asrEngine, sendEvent, mode)
+		handleOneMessage(ctx, msgType, data, sc)
 	}
 }
 
-func handleOneMessage(ctx context.Context, msgType int, data []byte, pipe *pipeline.Pipeline, codec audio.Codec, sampleRate int, ttsEngine, asrEngine string, sendEvent pipeline.EventCallback, mode string) {
+func handleOneMessage(ctx context.Context, msgType int, data []byte, sc *sessionCtx) {
 	if msgType == websocket.TextMessage {
-		handleTextFrame(ctx, data, pipe, ttsEngine, asrEngine, sendEvent, mode)
+		handleTextFrame(ctx, data, sc)
 		return
 	}
 	if msgType != websocket.BinaryMessage {
 		return
 	}
-	if mode == "text" {
+	if sc.mode == "text" {
 		return
 	}
-	if mode == "snippet" {
-		if err := pipe.ProcessChunkNoVAD(data, codec, sampleRate); err != nil {
+	if sc.mode == "snippet" {
+		if err := sc.pipe.ProcessChunkNoVAD(data, sc.codec, sc.sampleRate); err != nil {
 			slog.Error("buffer chunk", "error", err)
-			sendEvent(pipeline.Event{Type: "error", Text: err.Error()})
+			sc.sendEvent(pipeline.Event{Type: "error", Text: err.Error()})
 		}
 		return
 	}
 	// talk mode (default): VAD processing
-	if err := pipe.ProcessChunk(ctx, data, codec, sampleRate, ttsEngine, asrEngine, sendEvent); err != nil {
+	if err := sc.pipe.ProcessChunk(ctx, data, sc.codec, sc.sampleRate, sc.ttsEngine, sc.asrEngine, sc.sendEvent); err != nil {
 		slog.Error("process chunk", "error", err)
-		sendEvent(pipeline.Event{Type: "error", Text: err.Error()})
+		sc.sendEvent(pipeline.Event{Type: "error", Text: err.Error()})
 	}
 }
 
-func flushIfNeeded(ctx context.Context, mode string, pipe *pipeline.Pipeline, ttsEngine, asrEngine string, sendEvent pipeline.EventCallback) {
-	if mode == "snippet" || mode == "text" {
+func flushIfNeeded(ctx context.Context, sc *sessionCtx) {
+	if sc.mode == "snippet" || sc.mode == "text" {
 		return
 	}
-	if err := pipe.Flush(ctx, ttsEngine, asrEngine, sendEvent); err != nil {
+	if err := sc.pipe.Flush(ctx, sc.ttsEngine, sc.asrEngine, sc.sendEvent); err != nil {
 		slog.Error("flush", "error", err)
 	}
 }
 
-func handleTextFrame(ctx context.Context, data []byte, pipe *pipeline.Pipeline, ttsEngine, asrEngine string, sendEvent pipeline.EventCallback, mode string) {
+func handleTextFrame(ctx context.Context, data []byte, sc *sessionCtx) {
 	var act wsAction
 	if err := json.Unmarshal(data, &act); err != nil {
 		return
 	}
 
 	if act.Action == "chat" {
-		if err := pipe.ProcessTextMessage(ctx, act.Message, sendEvent); err != nil {
+		if err := sc.pipe.ProcessTextMessage(ctx, act.Message, sc.sendEvent); err != nil {
 			slog.Error("chat", "error", err)
-			sendEvent(pipeline.Event{Type: "error", Text: err.Error()})
+			sc.sendEvent(pipeline.Event{Type: "error", Text: err.Error()})
 		}
 		return
 	}
 
-	if act.Action == "process" && mode == "snippet" {
-		if err := pipe.ProcessBuffered(ctx, ttsEngine, asrEngine, sendEvent); err != nil {
+	if act.Action == "process" && sc.mode == "snippet" {
+		if err := sc.pipe.ProcessBuffered(ctx, sc.ttsEngine, sc.asrEngine, sc.sendEvent); err != nil {
 			slog.Error("process buffered", "error", err)
-			sendEvent(pipeline.Event{Type: "error", Text: err.Error()})
+			sc.sendEvent(pipeline.Event{Type: "error", Text: err.Error()})
 		}
 		return
 	}

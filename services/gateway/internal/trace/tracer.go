@@ -51,18 +51,23 @@ func (t *Tracer) drain() {
 }
 
 func (t *Tracer) handle(m traceMsg) {
-	handlers := map[string]func() error{
-		"run_create": func() error { return t.store.CreateRun(m.runID, m.sessionID) },
-		"run_update": func() error { return t.store.UpdateRun(m.runID, m.durationMs, m.transcript, m.response, m.status) },
-		"span":       func() error { return t.store.CreateSpan(m.span) },
-	}
-	fn, ok := handlers[m.kind]
-	if !ok {
-		return
-	}
-	if err := fn(); err != nil {
+	err := t.dispatch(m)
+	if err != nil {
 		slog.Warn("trace write failed", "kind", m.kind, "error", err)
 	}
+}
+
+func (t *Tracer) dispatch(m traceMsg) error {
+	if m.kind == "run_create" {
+		return t.store.CreateRun(m.runID, m.sessionID)
+	}
+	if m.kind == "run_update" {
+		return t.store.UpdateRun(m.runID, m.durationMs, m.transcript, m.response, m.status)
+	}
+	if m.kind == "span" {
+		return t.store.CreateSpan(m.span)
+	}
+	return nil
 }
 
 // StartRun begins a new run and returns its ID.

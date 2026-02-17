@@ -22,7 +22,5 @@ type LLMResult struct {
 type TokenCallback func(token string)
 
 type streamResult struct {
-	text     string
-	thinking string
-	ttft     time.Time
+	ttft time.Time
 }

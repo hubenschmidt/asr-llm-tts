@@ -1,8 +1,8 @@
 package pipeline
 
 import (
-	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -237,14 +237,7 @@ func NormalizeForSpeech(s string) string {
 }
 
 func parseInt(s string) (int, error) {
-	var n int
-	for _, ch := range s {
-		if ch < '0' || ch > '9' {
-			return 0, fmt.Errorf("not a number")
-		}
-		n = n*10 + int(ch-'0')
-	}
-	return n, nil
+	return strconv.Atoi(s)
 }
 
 // codeFilter strips markdown code fences (```) from a token stream.
@@ -258,26 +251,29 @@ type codeFilter struct {
 func (f *codeFilter) Filter(token string) string {
 	var out strings.Builder
 	for i := range len(token) {
-		ch := token[i]
-		if ch == '`' {
-			f.pending++
-			if f.pending == 3 {
-				f.inBlock = !f.inBlock
-				f.pending = 0
-			}
-			continue
-		}
-		// flush non-fence backticks (e.g. inline code)
-		if f.pending > 0 && !f.inBlock {
-			for range f.pending {
-				out.WriteByte('`')
-			}
-		}
-		f.pending = 0
-		if f.inBlock {
-			continue
-		}
-		out.WriteByte(ch)
+		f.filterChar(token[i], &out)
 	}
 	return out.String()
+}
+
+func (f *codeFilter) filterChar(ch byte, out *strings.Builder) {
+	if ch == '`' {
+		f.pending++
+		if f.pending == 3 {
+			f.inBlock = !f.inBlock
+			f.pending = 0
+		}
+		return
+	}
+	// flush non-fence backticks (e.g. inline code)
+	if f.pending > 0 && !f.inBlock {
+		for range f.pending {
+			out.WriteByte('`')
+		}
+	}
+	f.pending = 0
+	if f.inBlock {
+		return
+	}
+	out.WriteByte(ch)
 }

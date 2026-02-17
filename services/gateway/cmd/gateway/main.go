@@ -113,17 +113,7 @@ func main() {
 	}
 
 	postgresURL := env.Str("POSTGRES_URL", "")
-	var traceStore *trace.Store
-	if postgresURL != "" {
-		var traceErr error
-		traceStore, traceErr = trace.Open(postgresURL)
-		if traceErr != nil {
-			slog.Error("trace store open failed", "error", traceErr)
-		}
-		if traceStore != nil {
-			slog.Info("tracing enabled", "postgres", postgresURL)
-		}
-	}
+	traceStore := initTraceStore(postgresURL)
 
 	handler := ws.NewHandler(ws.HandlerConfig{
 		ASRClient:     asrRouter,
@@ -217,6 +207,19 @@ func initLLM(ollamaURL, ollamaModel, openaiAPIKey, anthropicAPIKey string, t tun
 		}), t.AnthropicModel)
 	}
 	return router
+}
+
+func initTraceStore(postgresURL string) *trace.Store {
+	if postgresURL == "" {
+		return nil
+	}
+	store, err := trace.Open(postgresURL)
+	if err != nil {
+		slog.Error("trace store open failed", "error", err)
+		return nil
+	}
+	slog.Info("tracing enabled", "postgres", postgresURL)
+	return store
 }
 
 func initTTS(piperModelDir string) *pipeline.TTSRouter {

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/hubenschmidt/asr-llm-tts-poc/gateway/internal/models"
 )
@@ -91,7 +92,14 @@ func (h *gpuHub) fetch() []byte {
 	if h.controlURL == "" {
 		return nil
 	}
-	resp, err := http.Get(h.controlURL + "/gpu")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", h.controlURL+"/gpu", nil)
+	if err != nil {
+		slog.Error("gpu fetch failed", "error", err)
+		return nil
+	}
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
 	if err != nil {
 		slog.Error("gpu fetch failed", "error", err)
 		return nil

@@ -71,18 +71,27 @@ func NewHTTPControlManager(registry *Registry) *HTTPControlManager {
 	}
 }
 
+// resolveControlURL looks up a service and returns its control URL, or an error.
+func (h *HTTPControlManager) resolveControlURL(name string) (string, error) {
+	meta, ok := h.registry.Lookup(name)
+	if !ok {
+		return "", fmt.Errorf("service %q not in registry", name)
+	}
+	if meta.ControlURL == "" {
+		return "", fmt.Errorf("service %q has no control URL", name)
+	}
+	return meta.ControlURL, nil
+}
+
 // Start launches a service via its HTTP control server.
 // Returns the raw GPU JSON from the control server response.
 // Optional params are appended as query string (e.g. "model=ggml-large-v3.bin").
 func (h *HTTPControlManager) Start(ctx context.Context, name string, params ...string) (json.RawMessage, error) {
-	meta, ok := h.registry.Lookup(name)
-	if !ok {
-		return nil, fmt.Errorf("service %q not in registry", name)
+	controlURL, err := h.resolveControlURL(name)
+	if err != nil {
+		return nil, err
 	}
-	if meta.ControlURL == "" {
-		return nil, fmt.Errorf("service %q has no control URL", name)
-	}
-	url := meta.ControlURL + "/start"
+	url := controlURL + "/start"
 	if len(params) > 0 {
 		url += "?" + params[0]
 	}
@@ -101,14 +110,11 @@ func (h *HTTPControlManager) Start(ctx context.Context, name string, params ...s
 // Stop kills a service via its HTTP control server.
 // Returns the raw GPU JSON from the control server response.
 func (h *HTTPControlManager) Stop(ctx context.Context, name string) (json.RawMessage, error) {
-	meta, ok := h.registry.Lookup(name)
-	if !ok {
-		return nil, fmt.Errorf("service %q not in registry", name)
+	controlURL, err := h.resolveControlURL(name)
+	if err != nil {
+		return nil, err
 	}
-	if meta.ControlURL == "" {
-		return nil, fmt.Errorf("service %q has no control URL", name)
-	}
-	req, err := http.NewRequestWithContext(ctx, "POST", meta.ControlURL+"/stop", nil)
+	req, err := http.NewRequestWithContext(ctx, "POST", controlURL+"/stop", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -142,11 +148,12 @@ func (h *HTTPControlManager) Status(ctx context.Context, name string) (*ServiceI
 	}
 	info := &ServiceInfo{Name: name, Category: meta.Category, Status: StatusStopped}
 
-	if meta.ControlURL == "" {
+	controlURL, err := h.resolveControlURL(name)
+	if err != nil {
 		return info, nil
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", meta.ControlURL+"/status", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", controlURL+"/status", nil)
 	if err != nil {
 		return info, nil
 	}
@@ -159,7 +166,9 @@ func (h *HTTPControlManager) Status(ctx context.Context, name string) (*ServiceI
 	var result struct {
 		Running bool `json:"running"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return info, nil
+	}
 	if !result.Running {
 		return info, nil
 	}
