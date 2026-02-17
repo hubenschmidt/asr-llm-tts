@@ -75,7 +75,6 @@ flowchart TB
 The LLM and TTS stages are **not** fully sequential. The gateway uses sentence pipelining: TTS begins synthesizing the first complete sentence while the LLM continues generating.
 
 ```mermaid
-%%{init: {'themeVariables': {'signalTextColor': '#000000'}} }%%
 sequenceDiagram
     box rgb(245, 158, 11) ASR
         participant ASR
@@ -90,25 +89,27 @@ sequenceDiagram
         participant WS as WebSocket to Client
     end
 
-    ASR->>LLM: transcript
-    activate LLM
+    rect rgba(30, 30, 30, 0.85)
+        ASR->>LLM: transcript
+        activate LLM
 
-    LLM-->>WS: llm_token streaming
-    LLM->>TTS: sentence 1 complete
-    activate TTS
-    LLM-->>WS: llm_token streaming
+        LLM-->>WS: llm_token streaming
+        LLM->>TTS: sentence 1 complete
+        activate TTS
+        LLM-->>WS: llm_token streaming
 
-    TTS->>WS: audio chunk sentence 1
-    deactivate TTS
+        TTS->>WS: audio chunk sentence 1
+        deactivate TTS
 
-    LLM->>TTS: sentence 2 complete
-    activate TTS
-    deactivate LLM
+        LLM->>TTS: sentence 2 complete
+        activate TTS
+        deactivate LLM
 
-    TTS->>WS: audio chunk sentence 2
-    deactivate TTS
+        TTS->>WS: audio chunk sentence 2
+        deactivate TTS
 
-    WS->>WS: metrics event
+        WS->>WS: metrics event
+    end
 ```
 
 ## Color Legend
