@@ -3,47 +3,27 @@
 ## End-to-End Flow
 
 ```mermaid
-flowchart LR
-    subgraph Browser
-        MIC[Microphone]
-        SPK[Speaker]
-        UI[CallPanel UI]
+flowchart TB
+    MIC["Browser Microphone"] -- "binary audio + callMetadata" --> WS["WebSocket Handler"]
+
+    subgraph Gateway
+        WS --> DEC["Decode Opus/PCM"]
+        DEC --> RS["Resample to 16 kHz"]
+        RS --> DN["RNNoise Denoise"]
+        DN --> VAD["Silero VAD"]
     end
 
-    subgraph GW ["Gateway - Go"]
-        direction TB
-        WS[WebSocket Handler]
-        DEC[Decode Opus/PCM]
-        RS["Resample to 16 kHz"]
-        DN[RNNoise Denoise]
-        VAD[Voice Activity Detection]
-    end
+    VAD -- "speech ended" --> ASR["ASR - Whisper"]
+    VAD -. "parallel" .-> CLS["Audio Classification"]
+    ASR -- "transcript" --> LLM["LLM - Ollama"]
+    LLM -- "sentence pipelining" --> TTS["TTS - Piper"]
 
-    subgraph Backends ["Pipeline Stages"]
-        direction TB
-        ASR["ASR (Whisper)"]
-        LLM["LLM (Ollama)"]
-        TTS["TTS (Piper)"]
-        CLS[Audio Classification]
-    end
+    ASR -- "transcript event" --> WS
+    LLM -- "llm_token events" --> WS
+    TTS -- "audio bytes" --> WS
+    CLS -. "emotion event" .-> WS
 
-    MIC -- binary audio --> WS
-    UI -- callMetadata JSON --> WS
-    WS --> DEC --> RS --> DN --> VAD
-
-    VAD -- speech ended --> ASR
-    VAD -. parallel .-> CLS
-
-    ASR -- transcript --> LLM
-    LLM -- sentence pipelining --> TTS
-
-    TTS -- audio bytes --> WS
-    ASR -- transcript event --> WS
-    LLM -- llm_token events --> WS
-    CLS -. emotion event .-> WS
-
-    WS -- events + audio --> SPK
-    WS -- events --> UI
+    WS -- "events + audio" --> SPK["Browser Speaker + UI"]
 ```
 
 ## Audio Processing Detail
