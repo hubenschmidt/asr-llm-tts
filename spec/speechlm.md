@@ -10,7 +10,7 @@ The current pipeline processes voice in three sequential stages:
 |-------|----------------|-------|
 | ASR (Whisper.cpp) | ~200 ms | Depends on utterance length |
 | LLM (Ollama) | ~1 500 ms | Dominated by TTFT + generation |
-| TTS (Piper/Kokoro) | ~350 ms | Sentence-level synthesis |
+| TTS (Piper) | ~350 ms | Sentence-level synthesis |
 | **Total E2E** | **~2 050 ms** | Before any audio reaches the client |
 
 Each handoff adds serialization overhead, format conversion, and scheduling delay. The LLM stage cannot begin until ASR emits a final transcript; TTS cannot begin until the LLM emits at least one sentence. These sequential dependencies set a hard floor on latency that no single-stage optimization can break.
