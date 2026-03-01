@@ -394,17 +394,21 @@ func (p *Pipeline) classifyEmotion(ctx context.Context, samples []float32, onEve
 // A goroutine (consumer) reads sentences and synthesizes audio via TTS in parallel,
 // so the first TTS audio is ready before the LLM finishes generating.
 func (p *Pipeline) streamLLMWithTTS(ctx context.Context, transcript, ttsEngine string, onEvent EventCallback, runID string) (float64, *LLMResult, error) {
-	sentenceCh := make(chan string, sentenceChannelBuffer)
+	ttsEnabled := ttsEngine != "" && p.cfg.TTSClient != nil
+
+	var sentenceCh chan string
 	var ttsWg sync.WaitGroup
 	var totalTTSMs float64
 	var ttsMu sync.Mutex
 
-	// TTS consumer goroutine — synthesizes each sentence as it arrives
-	ttsWg.Add(1)
-	go func() {
-		defer ttsWg.Done()
-		p.consumeSentences(ctx, sentenceCh, ttsEngine, onEvent, &totalTTSMs, &ttsMu, runID)
-	}()
+	if ttsEnabled {
+		sentenceCh = make(chan string, sentenceChannelBuffer)
+		ttsWg.Add(1)
+		go func() {
+			defer ttsWg.Done()
+			p.consumeSentences(ctx, sentenceCh, ttsEngine, onEvent, &totalTTSMs, &ttsMu, runID)
+		}()
+	}
 
 	// LLM producer — stream content tokens, split at sentence boundaries.
 	// Code blocks (``` fenced) are sent to the frontend but omitted from TTS.
@@ -414,6 +418,9 @@ func (p *Pipeline) streamLLMWithTTS(ctx context.Context, transcript, ttsEngine s
 	llmStart := time.Now()
 	llmResult, err := p.cfg.LLMClient.Chat(ctx, transcript, p.cfg.SystemPrompt, p.cfg.LLMModel, p.cfg.LLMEngine, func(token string) {
 		onEvent(Event{Type: "llm_token", Token: token})
+		if !ttsEnabled {
+			return
+		}
 		filtered := codeFilt.Filter(token)
 		if filtered == "" {
 			return
@@ -424,13 +431,14 @@ func (p *Pipeline) streamLLMWithTTS(ctx context.Context, transcript, ttsEngine s
 		}
 	})
 
-	// Flush remaining text from sentence buffer
-	remainder := sentenceBuf.Flush()
-	if remainder != "" {
-		sentenceCh <- remainder
+	if ttsEnabled {
+		remainder := sentenceBuf.Flush()
+		if remainder != "" {
+			sentenceCh <- remainder
+		}
+		close(sentenceCh)
+		ttsWg.Wait()
 	}
-	close(sentenceCh)
-	ttsWg.Wait()
 
 	llmOutput := ""
 	if llmResult != nil {

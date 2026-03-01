@@ -116,14 +116,13 @@ type sessionParams struct {
 }
 
 var metaDefaults = map[string]string{
-	"tts_engine":    "fast",
 	"asr_engine":    "whisper.cpp",
 	"llm_engine":    "ollama",
 	"system_prompt": "You are a helpful call center agent. Keep responses concise and conversational.",
 }
 
 func resolveParams(meta *callMetadata, baseCfg audio.VADConfig) sessionParams {
-	ttsEngine := orDefault(meta.TTSEngine, metaDefaults["tts_engine"])
+	ttsEngine := meta.TTSEngine
 	asrEngine := orDefault(meta.ASREngine, metaDefaults["asr_engine"])
 	llmEngine := orDefault(meta.LLMEngine, metaDefaults["llm_engine"])
 	systemPrompt := orDefault(meta.SystemPrompt, metaDefaults["system_prompt"])

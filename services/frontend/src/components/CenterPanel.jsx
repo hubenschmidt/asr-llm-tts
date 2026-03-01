@@ -28,7 +28,7 @@ export const CenterPanel = (props) => {
     on.sendChat(text);
   };
 
-  const enginesReady = () => !c.loadingLLM() && !c.loadingTTS() && c.llmModel() && c.ttsEngine();
+  const enginesReady = () => !c.loadingLLM() && !c.loadingTTS() && c.llmModel();
 
   return (
     <div class="center-panel">
