@@ -46,13 +46,17 @@ flowchart LR
         WhisperCtl[whisper-control]
     end
 
+    Provider[Cloud LLM\nOpenAI / Anthropic]
+
     Mic -- "PCM audio" --> WS
     WS --> VAD
     VAD -- "speech segment" --> Pipeline
-    Pipeline -- "audio" --> Whisper
-    Whisper -- "transcript" --> Pipeline
-    Pipeline -- "prompt stream" --> Ollama
-    Ollama -- "sentence chunks" --> Pipeline
+    Pipeline --> |audio| Whisper
+    Whisper --> Pipeline
+    Pipeline -- "prompt" --> Ollama
+    Pipeline -- "prompt" --> Provider
+    Ollama -- "sentences" --> Pipeline
+    Provider -- "sentences" --> Pipeline
     Pipeline -- "text" --> Piper
     Piper -- "audio" --> Pipeline
     Pipeline -- "PCM audio" --> WS
