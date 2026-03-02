@@ -26,11 +26,41 @@ Real-time voice pipeline for call center automation, built for AMD GPUs via ROCm
 
 ## Architecture
 
-Browser captures mic audio over WebSocket. The Go gateway decodes, resamples to 16kHz, and runs energy-based VAD. When speech ends, it posts to the ASR backend for transcription, streams the transcript to Ollama, and pipes each completed sentence to TTS while the LLM is still generating. Audio is sent back over WebSocket.
+```mermaid
+flowchart LR
+    subgraph Browser
+        Mic[🎤 Mic Capture]
+        Speaker[🔊 Audio Playback]
+    end
 
-Each WebSocket connection gets its own goroutine with context-based cancellation. LLM and TTS stages overlap via channels for sentence-level pipelining.
+    subgraph Gateway["Go Gateway (Docker)"]
+        WS[WebSocket Handler]
+        VAD[VAD + Resample 16kHz]
+        Pipeline[Pipeline Orchestrator]
+        Piper[Piper TTS - CPU]
+    end
 
-GPU-bound services (whisper-server, Ollama) run on the host for direct ROCm access. Piper TTS runs inside the gateway container. The `whisper-control` host process manages whisper-server lifecycle and exposes GPU monitoring.
+    subgraph Host["Host Services (ROCm)"]
+        Whisper[whisper-server - GPU]
+        Ollama[Ollama LLM - GPU]
+        WhisperCtl[whisper-control]
+    end
+
+    Mic -- "PCM audio" --> WS
+    WS --> VAD
+    VAD -- "speech segment" --> Pipeline
+    Pipeline -- "audio" --> Whisper
+    Whisper -- "transcript" --> Pipeline
+    Pipeline -- "prompt stream" --> Ollama
+    Ollama -- "sentence chunks" --> Pipeline
+    Pipeline -- "text" --> Piper
+    Piper -- "audio" --> Pipeline
+    Pipeline -- "PCM audio" --> WS
+    WS --> Speaker
+    WhisperCtl -. "lifecycle + GPU monitor" .-> Whisper
+```
+
+Each WebSocket connection gets its own goroutine with context-based cancellation. LLM and TTS stages overlap via channels for sentence-level pipelining. GPU-bound services run on the host for direct ROCm access; Piper TTS runs inside the gateway container.
 
 ## Codecs
 
