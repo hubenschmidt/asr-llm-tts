@@ -42,19 +42,18 @@ flowchart LR
 
     subgraph Host["Host Services (ROCm)"]
         Whisper[whisper-server - GPU]
+        Ollama[Ollama LLM - GPU]
         WhisperCtl[whisper-control]
     end
-
-    LLM["LLM Router<br/>Ollama · OpenAI · Anthropic"]
 
     Mic -- "PCM audio" --> WS
     WS --> VAD
     VAD -- "speech segment" --> Pipeline
-    Pipeline --> |audio| Whisper
+    Pipeline -- "audio" --> Whisper
     Whisper -- "transcript" --> Pipeline
-    Pipeline -- "transcript" --> LLM
-    LLM -- "response stream" --> Pipeline
-    Pipeline -- "sentence" --> Piper
+    Pipeline -- "prompt stream" --> Ollama
+    Ollama -- "sentence chunks" --> Pipeline
+    Pipeline -- "text" --> Piper
     Piper -- "audio" --> Pipeline
     Pipeline -- "PCM audio" --> WS
     WS --> Speaker
