@@ -53,11 +53,11 @@ flowchart LR
     VAD -- "speech segment" --> Pipeline
     Pipeline --> |audio| Whisper
     Whisper --> Pipeline
-    Pipeline -- "prompt" --> Ollama
-    Pipeline -- "prompt" --> Provider
-    Ollama -- "sentences" --> Pipeline
-    Provider -- "sentences" --> Pipeline
-    Pipeline -- "text" --> Piper
+    Pipeline -- "transcript" --> Ollama
+    Pipeline -- "transcript" --> Provider
+    Ollama -- "response stream" --> Pipeline
+    Provider -- "response stream" --> Pipeline
+    Pipeline -- "sentence" --> Piper
     Piper -- "audio" --> Pipeline
     Pipeline -- "PCM audio" --> WS
     WS --> Speaker
