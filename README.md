@@ -45,7 +45,7 @@ flowchart LR
         WhisperCtl[whisper-control]
     end
 
-    LLM[LLM Router\nOllama · OpenAI · Anthropic]
+    LLM["LLM Router<br/>Ollama · OpenAI · Anthropic"]
 
     Mic -- "PCM audio" --> WS
     WS --> VAD
