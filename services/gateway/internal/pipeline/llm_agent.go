@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -113,8 +114,12 @@ func (a *AgentLLM) Chat(ctx context.Context, userMessage, systemPrompt, model, e
 		handleStreamEvent(ev, &sr, onToken, &textBuf)
 	}
 
-	if streamErr := <-errCh; streamErr != nil {
+	streamErr := <-errCh
+	if streamErr != nil && textBuf.Len() == 0 {
 		return nil, fmt.Errorf("llm stream: %w", streamErr)
+	}
+	if streamErr != nil {
+		slog.Warn("llm stream ended with error after receiving tokens", "error", streamErr)
 	}
 
 	latency := time.Since(start)

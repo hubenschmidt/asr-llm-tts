@@ -61,8 +61,29 @@ export const ExplainPanel = (props) => {
 
   onCleanup(cleanup);
 
+  const [width, setWidth] = createSignal(parseInt(localStorage.getItem("explainWidth")) || 600);
+  let panelRef;
+
+  const onDragStart = (e) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = width();
+    const onMove = (ev) => {
+      const newW = Math.max(300, Math.min(startW + (startX - ev.clientX), window.innerWidth * 0.6));
+      setWidth(newW);
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      localStorage.setItem("explainWidth", width());
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+
   return (
-    <div class="explain-panel">
+    <div class="explain-panel" ref={panelRef} style={{ width: `${width()}px` }}>
+      <div class="explain-drag-handle" onMouseDown={onDragStart} />
       <div class="explain-header">
         <span class="explain-title">Explain This</span>
         <button class="explain-close" onClick={props.onClose}>&times;</button>

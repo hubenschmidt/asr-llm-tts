@@ -138,6 +138,10 @@ export const CenterPanel = (props) => {
           </button>
           <button onClick={on.stop} class="btn btn-secondary">End Session</button>
         </Show>
+
+        <button onClick={on.clear} class="btn btn-secondary" disabled={c.transcripts().length === 0 && !c.llmResponse()}>
+          Clear
+        </button>
       </div>
     </div>
   );

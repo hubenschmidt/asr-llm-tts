@@ -1,4 +1,4 @@
-import { createSignal, Show } from "solid-js";
+import { createSignal, createEffect, Show } from "solid-js";
 import { Marked } from "marked";
 import { markedHighlight } from "marked-highlight";
 import hljs from "highlight.js/lib/core";
@@ -36,6 +36,24 @@ export const marked = new Marked(
   { breaks: true, gfm: true }
 );
 
+const injectCopyButtons = (el) => {
+  if (!el) return;
+  el.querySelectorAll("pre").forEach((pre) => {
+    if (pre.querySelector(".code-copy-btn")) return;
+    pre.style.position = "relative";
+    const btn = document.createElement("button");
+    btn.className = "code-copy-btn";
+    btn.textContent = "Copy";
+    btn.onclick = () => {
+      const code = pre.querySelector("code");
+      navigator.clipboard.writeText(code ? code.textContent : pre.textContent);
+      btn.textContent = "Copied!";
+      setTimeout(() => { btn.textContent = "Copy"; }, 1500);
+    };
+    pre.appendChild(btn);
+  });
+};
+
 export const StatusDot = (props) => (
   <span class="status-dot" style={{ background: props.color }} />
 );
@@ -50,12 +68,13 @@ export const Tooltip = (props) => (
 export const TranscriptEntry = (props) => {
   const [showThinking, setShowThinking] = createSignal(false);
   const isAgent = () => props.role === "agent";
+  let mdRef;
   return (
     <div class={`transcript-line ${isAgent() ? "transcript-agent" : "transcript-user"}`}>
       <Show when={isAgent()} fallback={<p><strong>You: </strong>{props.text}</p>}>
         <div class="agent-markdown">
           <strong>Agent: </strong>
-          <span innerHTML={marked.parse(props.text || "")} />
+          <span ref={(el) => { mdRef = el; setTimeout(() => injectCopyButtons(el), 0); }} innerHTML={marked.parse(props.text || "")} />
           <Show when={props.onExplain}>
             <button class="explain-icon" onClick={() => props.onExplain(props.text)} title="Explain this">?</button>
           </Show>
@@ -75,12 +94,18 @@ export const TranscriptEntry = (props) => {
 
 export const StreamingEntry = (props) => {
   const [showThinking, setShowThinking] = createSignal(false);
+  let streamRef;
+  createEffect(() => {
+    const _text = props.text;
+    if (!streamRef) return;
+    setTimeout(() => injectCopyButtons(streamRef), 0);
+  });
   return (
     <div class="transcript-line transcript-agent">
       <Show when={props.text}>
         <div class="transcript-streaming agent-markdown">
           <strong>Agent: </strong>
-          <span innerHTML={marked.parse(props.text || "")} />
+          <span ref={streamRef} innerHTML={marked.parse(props.text || "")} />
         </div>
       </Show>
       <Show when={props.thinking}>

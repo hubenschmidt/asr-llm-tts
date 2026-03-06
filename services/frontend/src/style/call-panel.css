@@ -46,7 +46,7 @@
 }
 
 .sidebar-right {
-  width: 260px;
+  width: 320px;
   flex-shrink: 0;
   padding: 16px;
   overflow-y: auto;
@@ -309,6 +309,26 @@
   padding: 0;
 }
 
+/* === Copy button on code blocks === */
+.code-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  border: 1px solid #1a2535;
+  background: #0f1420;
+  color: #4a6880;
+  font-size: 10px;
+  font-family: inherit;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 150ms, color 150ms, border-color 150ms;
+}
+
+.agent-markdown pre:hover .code-copy-btn { opacity: 1; }
+.code-copy-btn:hover { color: #00b8d4; border-color: #00b8d4; }
+
 .agent-markdown :not(pre) > code {
   background: #0b0e17;
   padding: 1px 5px;
@@ -570,7 +590,9 @@
 
 /* === Explain panel === */
 .explain-panel {
-  width: 480px;
+  width: 600px;
+  max-width: 60vw;
+  min-width: 300px;
   flex-shrink: 0;
   height: 80vh;
   background: #0a0d15;
@@ -579,6 +601,23 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
+}
+
+.explain-drag-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 5px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+  transition: background 150ms;
+}
+
+.explain-drag-handle:hover,
+.explain-drag-handle:active {
+  background: #00b8d4;
 }
 
 .explain-header {

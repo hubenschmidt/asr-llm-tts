@@ -23,12 +23,15 @@ import { Tooltip } from "./TranscriptWidgets";
 
 const PROMPT_PRESETS = {
   general: "You are a helpful call center agent. Keep responses concise and conversational.",
-  algos: `You are an algorithm implementation assistant. When given an algorithm name or problem description:
-1. Implement the solution immediately — do NOT ask clarifying questions
-2. Add clear inline comments explaining each step of the algorithm
-3. Include time and space complexity as a comment at the top
-4. Use clean, idiomatic code in the requested language (default: JavaScript)
-5. Include a brief usage example after the implementation`,
+  algos: (lang) => `You are a coding interview partner. The candidate is solving leetcode-style problems and thinking out loud. Respond as a knowledgeable interviewer would:
+
+1. Start with the brute-force approach, then guide toward the optimal solution
+2. Narrate your thought process conversationally — this will be read aloud via TTS
+3. Write clean, idiomatic ${lang} code with inline comments
+4. After the solution, state time and space complexity
+5. Mention edge cases (empty input, single element, duplicates, overflow)
+6. If the candidate asks a follow-up ("now optimize it", "do it in-place"), build on the previous solution
+7. Keep explanations natural and spoken — avoid markdown tables or ASCII diagrams`,
 };
 
 // Only host-managed services that need start/stop via whisper-control.
@@ -38,7 +41,7 @@ const ENGINE_TO_SERVICE = {
 };
 
 const CLOUD_MODELS = {
-  openai: ["gpt-5.3-codex", "gpt-5.2-codex", "gpt-5.2", "gpt-5-mini", "gpt-5-nano"],
+  openai: ["gpt-5.4", "gpt-5.3-codex", "gpt-5.2-codex", "gpt-5.2", "gpt-5-mini", "gpt-5-nano"],
   anthropic: ["claude-opus-4-6", "claude-sonnet-4-5", "claude-haiku-4-5"],
 };
 
@@ -51,6 +54,8 @@ export const CallPanel = () => {
   const [ttsEngine, _setTtsEngine] = createSignal(localStorage.getItem("ttsEngine") || "");
   const [asrEngine, setAsrEngine] = createSignal("");
   const [promptPreset, setPromptPreset] = createSignal(localStorage.getItem("promptPreset") || "general");
+  const [langPref, _setLangPref] = createSignal(localStorage.getItem("langPref") || "JavaScript");
+  const setLangPref = (v) => { _setLangPref(v); localStorage.setItem("langPref", v); };
   const [systemPrompt, setSystemPrompt] = createSignal(localStorage.getItem("systemPrompt") || PROMPT_PRESETS.general);
   const [llmModel, _setLlmModel] = createSignal("");
   const [llmEngine, _setLlmEngine] = createSignal(localStorage.getItem("llmEngine") || "ollama");
@@ -96,7 +101,7 @@ export const CallPanel = () => {
 
   // ASR tuning signals (localStorage-persisted)
   const [noiseSuppression, _setNoiseSuppression] = createSignal(localStorage.getItem("noiseSuppression") === "true");
-  const [asrPrompt, _setAsrPrompt] = createSignal(localStorage.getItem("asrPrompt") || "");
+  const [asrPrompt, _setAsrPrompt] = createSignal(localStorage.getItem("asrPrompt") || "leetcode interview");
   const [confidenceThreshold, _setConfidenceThreshold] = createSignal(parseFloat(localStorage.getItem("confidenceThreshold")) || 0.6);
   const [referenceTranscript, _setReferenceTranscript] = createSignal(localStorage.getItem("referenceTranscript") || "");
   const [vadSilenceTimeoutMs, _setVadSilenceTimeoutMs] = createSignal(parseInt(localStorage.getItem("vadSilenceTimeoutMs")) || 1000);
@@ -263,6 +268,16 @@ export const CallPanel = () => {
     return serviceColor(svc);
   };
 
+  // Batch LLM tokens per animation frame so marked.parse() runs at most ~60x/sec
+  let tokenBuf = "";
+  let tokenRAF = 0;
+  const flushTokens = () => {
+    tokenRAF = 0;
+    const chunk = tokenBuf;
+    tokenBuf = "";
+    setLlmResponse((prev) => prev + chunk);
+  };
+
   const playAudio = (data) => {
     if (!playAudioCtx) playAudioCtx = new AudioContext();
     const ctx = playAudioCtx;
@@ -297,8 +312,14 @@ export const CallPanel = () => {
     audioClassification,
     onTranscript: (text) =>
       setTranscripts((prev) => [...prev, { role: "user", text }]),
-    onLLMToken: (token) => setLlmResponse((prev) => prev + token),
+    onLLMToken: (token) => {
+      tokenBuf += token;
+      if (!tokenRAF) tokenRAF = requestAnimationFrame(flushTokens);
+    },
     onLLMDone: (text) => {
+      cancelAnimationFrame(tokenRAF);
+      tokenRAF = 0;
+      tokenBuf = "";
       setTranscripts((prev) => [...prev, { role: "agent", text, thinking: pendingThinking() }]);
       setLlmResponse("");
       setPendingThinking("");
@@ -442,10 +463,23 @@ export const CallPanel = () => {
     localStorage.setItem("systemPrompt", e.currentTarget.value);
   };
 
+  const resolvePreset = (name) => {
+    const preset = PROMPT_PRESETS[name] || PROMPT_PRESETS.general;
+    return typeof preset === "function" ? preset(langPref()) : preset;
+  };
+
   const handlePromptPreset = (name) => {
     setPromptPreset(name);
     localStorage.setItem("promptPreset", name);
-    const prompt = PROMPT_PRESETS[name] || PROMPT_PRESETS.general;
+    const prompt = resolvePreset(name);
+    setSystemPrompt(prompt);
+    localStorage.setItem("systemPrompt", prompt);
+  };
+
+  const handleLangPrefChange = (e) => {
+    setLangPref(e.target.value);
+    if (promptPreset() !== "algos") return;
+    const prompt = resolvePreset("algos");
     setSystemPrompt(prompt);
     localStorage.setItem("systemPrompt", prompt);
   };
@@ -453,7 +487,7 @@ export const CallPanel = () => {
   const configProps = {
     asrEngine, asrModel, asrModels, llmEngine, llmModel, allLLMModels, ttsEngine,
     availableTTS, loadingASR, loadingLLM, loadingTTS, isStreaming,
-    systemPrompt, promptPreset, serviceStatuses, downloadingModel, downloadProgress,
+    systemPrompt, promptPreset, langPref, serviceStatuses, downloadingModel, downloadProgress,
     audioBandwidth, bandwidthModes,
   };
 
@@ -470,6 +504,7 @@ export const CallPanel = () => {
     bandwidthChange: (e) => setAudioBandwidth(e.target.value),
     systemPromptChange: handleSystemPromptChange,
     promptPresetChange: handlePromptPreset,
+    langPrefChange: handleLangPrefChange,
     asrDotColor,
     llmDotColor,
     ttsDotColor,
@@ -500,6 +535,16 @@ export const CallPanel = () => {
     sendChat: handleSendChat,
     setExplainText: (text) => setExplainText(text),
     closeExplain: () => setExplainText(null),
+    clear: () => {
+      stop();
+      setTranscripts([]);
+      setLlmResponse("");
+      setPendingThinking("");
+      setLatestMetrics(null);
+      setMetricsHistory([]);
+      setError(null);
+      setClassificationData(null);
+    },
   };
 
   return (
@@ -532,6 +577,23 @@ export const CallPanel = () => {
               Algos
             </button>
           </div>
+          <Show when={promptPreset() === "algos"}>
+            <select
+              value={langPref()}
+              onChange={handleLangPrefChange}
+              class="select"
+              disabled={isStreaming()}
+              style={{ "margin-bottom": "6px" }}
+            >
+              <option value="JavaScript">JavaScript</option>
+              <option value="Python">Python</option>
+              <option value="TypeScript">TypeScript</option>
+              <option value="Go">Go</option>
+              <option value="Rust">Rust</option>
+              <option value="Java">Java</option>
+              <option value="C++">C++</option>
+            </select>
+          </Show>
           <textarea
             value={systemPrompt()}
             onInput={handleSystemPromptChange}

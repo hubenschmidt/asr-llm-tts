@@ -42,13 +42,13 @@ type tuning struct {
 func defaultTuning() tuning {
 	return tuning{
 		LLMSystemPrompt:    "You are a helpful call center agent. Keep responses concise and conversational.",
-		LLMMaxTokens:       2048,
+		LLMMaxTokens:       128000,
 		ASRPoolSize:        50,
 		LLMPoolSize:        50,
 		TTSPoolSize:        50,
 		VADSpeechThreshold: -25,
 		OpenAIURL:          "https://api.openai.com",
-		OpenAIModel:        "gpt-4.1-nano",
+		OpenAIModel:        "gpt-5.4",
 		AnthropicURL:       "https://api.anthropic.com",
 		AnthropicModel:     "claude-sonnet-4-5",
 	}
@@ -200,11 +200,7 @@ func initLLM(ollamaURL, ollamaModel, openaiAPIKey, anthropicAPIKey string, t tun
 		}), t.OpenAIModel)
 	}
 	if anthropicAPIKey != "" {
-		router.Register("anthropic", agents.NewOpenAIProvider(agents.OpenAIProviderParams{
-			BaseURL:      param.NewOpt(t.AnthropicURL + "/v1/"),
-			APIKey:       param.NewOpt(anthropicAPIKey),
-			UseResponses: param.NewOpt(false),
-		}), t.AnthropicModel)
+		router.RegisterRaw("anthropic", pipeline.NewAnthropicClient(t.AnthropicURL, anthropicAPIKey, t.LLMMaxTokens), t.AnthropicModel)
 	}
 	return router
 }
